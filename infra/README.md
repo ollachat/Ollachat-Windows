@@ -100,3 +100,4 @@ aws s3 sync release/ s3://<RELEASE_BUCKET_NAME>/ --exclude "*" --include "*.exe"
 # 2. Invalidate latest.yml cache on CloudFront
 aws cloudfront create-invalidation --distribution-id <CLOUDFRONT_DIST_ID> --paths "/latest.yml"
 ```
+

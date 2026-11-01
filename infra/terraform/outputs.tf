@@ -32,3 +32,4 @@ output "electron_builder_publish_config" {
       region: ${var.aws_region}
   EOT
 }
+

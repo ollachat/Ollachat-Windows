@@ -237,3 +237,4 @@ resource "aws_s3_bucket_policy" "releases" {
   bucket = aws_s3_bucket.releases.id
   policy = data.aws_iam_policy_document.s3_release_policy.json
 }
+
