@@ -42,6 +42,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 electron-output.txt
+electron-api-test.txt
 out.log
 err.log
 app-run.log
