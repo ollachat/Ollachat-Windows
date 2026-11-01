@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OllaChat Call</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    :root {
+      --bg-dark: #0b141a;
+      --card-bg: #111b21;
+      --panel-bg: #202c33;
+      --text-primary: #e9edef;
+      --text-secondary: #8696a0;
+      --accent-green: #00a884;
+      --accent-green-hover: #02906f;
+      --danger-red: #ea0038;
+      --danger-red-hover: #d00030;
+      --control-btn-bg: rgba(255, 255, 255, 0.12);
+      --control-btn-hover: rgba(255, 255, 255, 0.2);
+      --control-active-bg: #00a884;
+    }
+    body {
+      background-color: var(--card-bg);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+    }
+    /* Draggable Window Header */
+    .floating-header {
+      height: 32px;
+      background: rgba(11, 20, 26, 0.95);
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 0 0 12px;
+      -webkit-app-region: drag;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      flex-shrink: 0;
+    }
+    .header-branding {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.3px;
+    }
+    .header-branding svg {
+      width: 13px;
+      height: 13px;
+      color: var(--accent-green);
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      height: 32px;
+      -webkit-app-region: no-drag;
+    }
+    .btn-window-control,
+    .btn-header-action {
+      background: transparent;
+      border: none;
+      color: #8696a0;
+      cursor: pointer;
+      width: 46px;
+      height: 32px;
+      border-radius: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.1s ease, color 0.1s ease;
+      -webkit-app-region: no-drag !important;
+      padding: 0;
+    }
+    .btn-window-control:hover,
+    .btn-header-action:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+    }
+    .btn-window-control.btn-window-close:hover,
+    #btn-header-close:hover {
+      background: #e81123 !important;
+      color: #ffffff !important;
+    }
+    .btn-window-control svg,
+    .btn-header-action svg {
+      width: 10px;
+      height: 10px;
+    }
+
+    /* Main Container */
+    .floating-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* View Modes */
+    .call-view {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 12px;
+      gap: 8px;
+    }
+    .hidden {
+      display: none !important;
+    }
+
+    /* Avatar & Info */
+    .avatar-wrapper {
+      position: relative;
+    }
+    .call-avatar {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: #005c4b;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 20px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    .call-avatar.ringing {
+      animation: pulse-ring 1.6s infinite;
+    }
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(0, 168, 132, 0.6); }
+      70% { box-shadow: 0 0 0 10px rgba(0, 168, 132, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(0, 168, 132, 0); }
+    }
+    .call-peer-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      text-align: center;
+      max-width: 260px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .call-status-subtitle {
+      font-size: 11px;
+      color: var(--text-secondary);
+      text-align: center;
+    }
+    .call-timer {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--accent-green);
+      background: rgba(0, 168, 132, 0.1);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    /* Video Stage */
+    .floating-video-stage {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .floating-remote-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .floating-video-placeholder {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      color: var(--text-secondary);
+      font-size: 11px;
+    }
+    .video-overlay-info {
+      position: absolute;
+      top: 6px;
+      left: 8px;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      padding: 2px 8px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: #fff;
+      z-index: 10;
+    }
+    .video-overlay-timer {
+      color: var(--accent-green);
+      font-weight: 600;
+    }
+
+    /* Floating Controls Bar */
+    .controls-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 4px;
+      z-index: 20;
+    }
+    .video-controls-bar {
+      position: absolute;
+      bottom: 8px;
+      left: 0;
+      width: 100%;
+      margin-top: 0;
+      background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+      padding-top: 12px;
+    }
+    .btn-action {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      border: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: #fff;
+      background: var(--control-btn-bg);
+      transition: all 0.15s ease;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    }
+    .btn-action:hover {
+      background: var(--control-btn-hover);
+      transform: scale(1.05);
+    }
+    .btn-action.btn-accept {
+      background: var(--accent-green);
+    }
+    .btn-action.btn-accept:hover {
+      background: var(--accent-green-hover);
+    }
+    .btn-action.btn-hangup, .btn-action.btn-decline {
+      background: var(--danger-red);
+    }
+    .btn-action.btn-hangup:hover, .btn-action.btn-decline:hover {
+      background: var(--danger-red-hover);
+    }
+    .btn-action.btn-muted, .btn-action.btn-camera-off {
+      background: rgba(255, 255, 255, 0.25);
+      color: #ea0038;
+    }
+    .btn-action.btn-sharing {
+      background: var(--accent-green);
+      box-shadow: 0 0 10px rgba(0, 168, 132, 0.6);
+    }
+    .btn-action svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* Local Camera PIP Thumbnail */
+    .floating-local-video-container {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 140px;
+      height: 95px;
+      background: #111b21;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      z-index: 15;
+    }
+    .floating-local-video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+    .floating-local-video-off {
+      position: absolute;
+      inset: 0;
+      background: #111b21;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      color: var(--text-secondary);
+      font-size: 10px;
+    }
+    .floating-local-video-off svg {
+      width: 20px;
+      height: 20px;
+      color: #ea0038;
+    }
+
+    /* Drag regions and button no-drag rule */
+    button,
+    .btn-action,
+    .btn-header-action,
+    .btn-compact-action,
+    .btn-modal-cancel,
+    .btn-modal-confirm,
+    .btn-invite,
+    .floating-modal-close,
+    .screenshare-tab,
+    video,
+    input,
+    [role="button"] {
+      -webkit-app-region: no-drag !important;
+      cursor: pointer;
+    }
+
+    /* Floating Modals: Screen Share & Add Participants */
+    .floating-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+    .floating-modal-dialog {
+      background: #111b21;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      width: 100%;
+      max-width: 480px;
+      max-height: 90%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.8);
+      animation: modal-pop 0.15s ease-out;
+    }
+    @keyframes modal-pop {
+      from { transform: scale(0.96); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+    .floating-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .floating-modal-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .floating-modal-close {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1;
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .floating-modal-close:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+    }
+    .floating-modal-body {
+      padding: 12px 16px;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 120px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .floating-modal-footer {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 10px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.2);
+    }
+    .btn-modal-cancel {
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: var(--text-secondary);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .btn-modal-cancel:hover {
+      color: var(--text-primary);
+      border-color: rgba(255, 255, 255, 0.35);
+    }
+    .btn-modal-confirm {
+      background: var(--accent-green);
+      border: none;
+      color: #111b21;
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-modal-confirm:hover:not(:disabled) {
+      background: var(--accent-green-hover);
+    }
+    .btn-modal-confirm:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* Screen Share Tabs & Grid */
+    .screenshare-tabs {
+      display: flex;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      gap: 4px;
+      padding: 0 16px;
+    }
+    .screenshare-tab {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 8px 12px;
+      cursor: pointer;
+      position: relative;
+    }
+    .screenshare-tab.active {
+      color: var(--accent-green);
+    }
+    .screenshare-tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--accent-green);
+    }
+    .screenshare-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 10px;
+      overflow-y: auto;
+      max-height: 220px;
+      padding: 4px;
+    }
+    .screenshare-item {
+      background: #202c33;
+      border: 2px solid transparent;
+      border-radius: 6px;
+      overflow: hidden;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      transition: all 0.15s ease;
+    }
+    .screenshare-item:hover {
+      border-color: rgba(0, 168, 132, 0.5);
+    }
+    .screenshare-item.selected {
+      border-color: var(--accent-green);
+      background: #2a3942;
+    }
+    .screenshare-thumb-box {
+      width: 100%;
+      height: 80px;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .screenshare-thumb-img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .screenshare-name {
+      padding: 6px 8px;
+      font-size: 11px;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
+    }
+
+    /* Add Participant Elements */
+    .participant-search-input {
+      width: 100%;
+      background: #202c33;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      padding: 7px 12px;
+      color: var(--text-primary);
+      font-size: 12px;
+      outline: none;
+    }
+    .participant-search-input:focus {
+      border-color: var(--accent-green);
+    }
+    .participant-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      max-height: 220px;
+    }
+    .participant-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .participant-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .participant-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #005c4b;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .participant-meta {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .participant-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .participant-phone {
+      font-size: 10px;
+      color: var(--text-secondary);
+    }
+    .btn-invite {
+      background: var(--accent-green);
+      border: none;
+      color: #111b21;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .btn-invite:hover:not(:disabled) {
+      background: var(--accent-green-hover);
+    }
+    .btn-invite:disabled, .btn-invite.invited {
+      background: rgba(255, 255, 255, 0.15);
+      color: var(--text-secondary);
+      cursor: default;
+    }
+    .empty-notice {
+      color: var(--text-secondary);
+      font-size: 11px;
+      text-align: center;
+      padding: 16px 0;
+    }
+
+    /* Compact Mode Styles (State B - Desktop Compact Call Pill) */
+    body.is-compact-mode {
+      border-radius: 28px;
+      background: #111b21;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+    }
+    body.is-compact-mode .floating-header {
+      display: none !important;
+    }
+    body.is-compact-mode .floating-body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    body.is-compact-mode .call-view {
+      display: none !important;
+    }
+    body.is-detailed-mode #view-compact {
+      display: none !important;
+    }
+
+    .compact-call-widget {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px 6px 8px;
+      -webkit-app-region: drag;
+      cursor: grab;
+      user-select: none;
+      box-sizing: border-box;
+    }
+    .compact-call-widget:active {
+      cursor: grabbing;
+    }
+
+    .compact-widget-body {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 0;
+      -webkit-app-region: drag;
+    }
+
+    .compact-avatar-wrapper {
+      position: relative;
+      flex-shrink: 0;
+    }
+    .compact-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #00a884, #005c4b);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 13px;
+      box-shadow: 0 2px 8px rgba(0, 168, 132, 0.4);
+    }
+    .compact-avatar svg {
+      width: 18px;
+      height: 18px;
+      color: #fff;
+    }
+    .compact-status-dot {
+      position: absolute;
+      bottom: -1px;
+      right: -1px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #00a884;
+      border: 2px solid #111b21;
+      animation: pulse-ring 2s infinite;
+    }
+
+    .compact-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      flex: 1;
+    }
+    .compact-peer-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .compact-timer {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent-green);
+      letter-spacing: 0.2px;
+    }
+
+    .compact-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      -webkit-app-region: no-drag;
+    }
+    .btn-compact-action {
+      background: rgba(255, 255, 255, 0.12);
+      border: none;
+      color: var(--text-primary);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      -webkit-app-region: no-drag !important;
+    }
+    .btn-compact-action:hover {
+      background: rgba(255, 255, 255, 0.22);
+      transform: scale(1.08);
+    }
+    .btn-compact-action svg {
+      width: 14px;
+      height: 14px;
+    }
+  </style>
+</head>
+<body class="is-detailed-mode">
+  <!-- Frameless Draggable Header -->
+  <header class="floating-header">
+    <div class="header-branding">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+      </svg>
+      <span id="header-title">OllaChat Call</span>
+    </div>
+    <div class="header-actions">
+      <button type="button" class="btn-window-control btn-window-minimize" id="btn-header-minimize" title="Minimize" aria-label="Minimize">
+        <svg viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
+      <button type="button" class="btn-window-control btn-window-maximize" id="btn-header-restore" title="Maximize" aria-label="Maximize">
+        <svg viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
+      <button type="button" class="btn-window-control btn-window-close" id="btn-header-close" title="Close" aria-label="Close">
+        <svg viewBox="0 0 10 10"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5" stroke="currentColor" stroke-width="1.2"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Body Container -->
+  <main class="floating-body">
+    <!-- View 0: Compact Floating Call Widget View (State B) -->
+    <section class="compact-call-widget hidden" id="view-compact">
+      <div class="compact-widget-body" id="compact-widget-body">
+        <div class="compact-avatar-wrapper">
+          <div class="compact-avatar" id="compact-avatar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+            </svg>
+          </div>
+          <span class="compact-status-dot"></span>
+        </div>
+        <div class="compact-info">
+          <span class="compact-peer-name" id="compact-peer-name">Contact</span>
+          <span class="compact-timer" id="compact-timer">00:00</span>
+        </div>
+        <div class="compact-controls">
+          <button type="button" class="btn-compact-action" id="btn-compact-restore" title="Restore call window" aria-label="Restore call">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </section>
+    <!-- View 1: Incoming Call View -->
+    <section class="call-view hidden" id="view-incoming">
+      <div class="avatar-wrapper">
+        <div class="call-avatar ringing" id="incoming-avatar">?</div>
+      </div>
+      <div class="call-peer-name" id="incoming-peer-name">Contact</div>
+      <div class="call-status-subtitle" id="incoming-subtitle">Incoming audio call...</div>
+      <div class="controls-bar">
+        <button type="button" class="btn-action" id="btn-incoming-mute" title="Toggle Mute">
+          <svg id="incoming-mute-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action btn-decline" id="btn-incoming-decline" title="Decline call">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="2" y1="2" x2="22" y2="22"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action btn-accept" id="btn-incoming-accept" title="Accept call">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action" id="btn-incoming-restore" title="Restore to main window">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- View 1B: Outgoing Ringing Call View -->
+    <section class="call-view hidden" id="view-outgoing">
+      <div class="avatar-wrapper">
+        <div class="call-avatar ringing" id="outgoing-avatar">?</div>
+      </div>
+      <div class="call-peer-name" id="outgoing-peer-name">Contact</div>
+      <div class="call-status-subtitle" id="outgoing-subtitle">Calling...</div>
+      <div class="controls-bar">
+        <button type="button" class="btn-action" id="btn-outgoing-mute" title="Toggle Mute">
+          <svg id="outgoing-mute-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action btn-hangup" id="btn-outgoing-hangup" title="Cancel call">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="2" y1="2" x2="22" y2="22"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action" id="btn-outgoing-restore" title="Restore to main window">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- View 2: Active Audio Call View -->
+    <section class="call-view hidden" id="view-audio">
+      <div class="avatar-wrapper">
+        <div class="call-avatar" id="audio-avatar">?</div>
+      </div>
+      <div class="call-peer-name" id="audio-peer-name">Contact</div>
+      <div class="call-timer" id="audio-timer">00:00</div>
+      <div class="controls-bar">
+        <button type="button" class="btn-action" id="btn-audio-mute" title="Toggle Mute" aria-label="Toggle mute">
+          <svg id="audio-mute-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action" id="btn-audio-add-participant" title="Add People" aria-label="Add people to call">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action btn-hangup" id="btn-audio-hangup" title="End call" aria-label="End call">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="2" y1="2" x2="22" y2="22"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action" id="btn-audio-restore" title="Restore to main window" aria-label="Restore window">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- View 3: Active Video Call View -->
+    <section class="call-view hidden" id="view-video" style="padding:0;">
+      <div class="floating-video-stage">
+        <video class="floating-remote-video" id="floating-remote-video" autoplay playsinline muted></video>
+        <div class="floating-video-placeholder hidden" id="floating-video-placeholder">
+          <div class="call-avatar" id="video-avatar-placeholder">?</div>
+          <span>Waiting for video...</span>
+        </div>
+        <!-- Local User Video PIP Thumbnail -->
+        <div class="floating-local-video-container" id="floating-local-video-container">
+          <video class="floating-local-video" id="floating-local-video" autoplay playsinline muted></video>
+          <div class="floating-local-video-off hidden" id="floating-local-video-off">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="2" y1="2" x2="22" y2="22"/>
+              <path d="M10.41 10.41a2 2 0 0 0 2.83 2.83"/>
+              <path d="M13.5 6.5A6.5 6.5 0 0 1 20 13c0 .87-.17 1.7-.48 2.46L22 17.92V8l-6 4v-.5a6.5 6.5 0 0 0-6.5-6.5c-.87 0-1.7.17-2.46.48L9.08 7.42A6.47 6.47 0 0 1 13.5 6.5Z"/>
+              <rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>
+            </svg>
+            <span>Camera Off</span>
+          </div>
+        </div>
+      </div>
+      <div class="video-overlay-info">
+        <span id="video-peer-name">Contact</span>
+        <span>•</span>
+        <span class="video-overlay-timer" id="video-timer">00:00</span>
+      </div>
+      <div class="controls-bar video-controls-bar">
+        <button type="button" class="btn-action" id="btn-video-mute" title="Toggle Mute" aria-label="Toggle mute">
+          <svg id="video-mute-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action hidden" id="btn-video-camera" title="Toggle Camera" aria-label="Toggle camera">
+          <svg id="video-camera-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action" id="btn-video-screenshare" title="Share Screen" aria-label="Share screen">
+          <svg id="video-screenshare-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="20" height="14" x="2" y="3" rx="2"/>
+            <line x1="8" y1="21" x2="16" y2="21"/>
+            <line x1="12" y1="17" x2="12" y2="21"/>
+            <path d="m10 9 4-4 4 4"/>
+            <line x1="14" y1="5" x2="14" y2="13"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action" id="btn-video-add-participant" title="Add People" aria-label="Add people to call">
+          <svg id="video-add-participant-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action btn-hangup" id="btn-video-hangup" title="End call" aria-label="End call">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="2" y1="2" x2="22" y2="22"/>
+          </svg>
+        </button>
+        <button type="button" class="btn-action" id="btn-video-restore" title="Restore to main window" aria-label="Restore window">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+          </svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- Modal: Share Screen Inside Separate Window -->
+    <div class="floating-modal-backdrop hidden" id="floating-screenshare-modal">
+      <div class="floating-modal-dialog">
+        <div class="floating-modal-header">
+          <span class="floating-modal-title">Share your screen</span>
+          <button type="button" class="floating-modal-close" id="btn-close-floating-screenshare" aria-label="Close">✕</button>
+        </div>
+        <div class="screenshare-tabs">
+          <button type="button" class="screenshare-tab active" id="tab-floating-screens">Entire Screen</button>
+          <button type="button" class="screenshare-tab" id="tab-floating-windows">Window</button>
+        </div>
+        <div class="floating-modal-body">
+          <div class="empty-notice hidden" id="floating-screenshare-loading">Loading screens and windows...</div>
+          <div class="empty-notice hidden" id="floating-screenshare-empty">No screens or windows found</div>
+          <div class="screenshare-grid" id="floating-screenshare-grid"></div>
+        </div>
+        <div class="floating-modal-footer">
+          <button type="button" class="btn-modal-cancel" id="btn-cancel-floating-screenshare">Cancel</button>
+          <button type="button" class="btn-modal-confirm" id="btn-confirm-floating-screenshare" disabled>Share</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Add People to Call Inside Separate Window -->
+    <div class="floating-modal-backdrop hidden" id="floating-add-participant-modal">
+      <div class="floating-modal-dialog">
+        <div class="floating-modal-header">
+          <span class="floating-modal-title">Add people to call</span>
+          <button type="button" class="floating-modal-close" id="btn-close-floating-add" aria-label="Close">✕</button>
+        </div>
+        <div class="floating-modal-body">
+          <input type="text" class="participant-search-input" id="floating-participant-search" placeholder="Search participants" autocomplete="off" />
+          <div class="empty-notice hidden" id="floating-participant-loading">Loading participants...</div>
+          <div class="empty-notice hidden" id="floating-participant-empty">No participants available to invite</div>
+          <div class="participant-list" id="floating-participant-list"></div>
+        </div>
+        <div class="floating-modal-footer">
+          <button type="button" class="btn-modal-confirm" id="btn-done-floating-add">Done</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="floating-call.js" type="module"></script>
+</body>
+</html>

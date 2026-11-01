@@ -1,0 +1,97 @@
+================================================================================
+OLLACHAT WINDOWS CLIENT - DAILY PROGRESS REPORT
+Date: September 24, 2026
+Workspace: OllaCore_Android/windows
+================================================================================
+
+1. EXECUTIVE SUMMARY
+--------------------------------------------------------------------------------
+Today's engineering work focused on implementing and stabilizing Step 1 & Step 2
+of the OllaChat desktop client communication milestone:
+- Voice message recording, encoding, and composer integration.
+- Voice & ordinary audio file upload pipelines and readiness synchronization.
+- Historical voice message resolution and resilient error recovery.
+- Robust MIME/magic-byte detection for audio attachments.
+- Full test suite execution (406/406 passing), bundle builds, and startup validation.
+- All modifications remained strictly contained within the `windows/` directory
+  with zero changes to the Android or reference implementations.
+
+
+2. KEY TASKS & ACCOMPLISHMENTS
+--------------------------------------------------------------------------------
+A. VOICE RECORDER CONTROLLER & COMPOSER INTEGRATION
+   - Created `src/renderer/voice-recorder.js` implementing a clean state machine
+     (idle -> requesting_permission -> recording -> paused -> stopped -> error).
+   - Configured `getUserMedia` with strict `{ audio: true, video: false }` constraints.
+   - Handled WebM Opus recording (`audio/webm;codecs=opus`) with duration clamping
+     (min 0.5s threshold, max 10m auto-stop).
+   - Integrated dynamic recording UI into composer with live duration timer,
+     level metering, cancel button, and send action.
+   - Added explicit Windows OS / Chromium permission error mapping for
+     `NotAllowedError`, `NotFoundError`, and `NotReadableError`.
+
+B. VOICE MESSAGE SENDING PIPELINE
+   - Implemented `processAndUploadVoiceNote` to create optimistic message bubbles
+     with instant local playback preview.
+   - Built resilient multipart upload flow: `initAttachment` -> presigned S3 PUT ->
+     `completeAttachment` -> readiness polling via `downloadAttachment`.
+   - Formatted backend WebSocket payload adhering strictly to OllaCore contract:
+     * kind: "file"
+     * body: { text: "Voice message", filename, mime, byte_size, duration, is_voice_note: true }
+     * attachment_ids: [attachmentId]
+
+C. ORDINARY AUDIO & MEDIA ATTACHMENT FIXES
+   - Fixed MP3 file upload failure in `src/api/mime-validator.js` by expanding
+     magic byte validation to detect both ID3 tags (`[0x49, 0x44, 0x33]`) and
+     standard MPEG sync frames (`[0xFF, 0xFB/FA/F3/F2/E3]`).
+   - Fixed retry payload serialization in `handleRetryMessage` to ensure retry
+     dispatches normalize wire `kind` to `'file'`.
+
+D. HISTORICAL VOICE MESSAGES & PERSISTENCE
+   - Resolved the infinite "Loading voice message..." bug when reopening rooms
+     or restarting the app.
+   - Added `attachmentErrors` cache and document-wide placeholder querying to
+     transition failed resolutions into actionable retry buttons (`↻ Retry`).
+   - Implemented automatic retry on media element playback errors before
+     showing retry placeholders.
+   - Added audio lifecycle cleanup to pause active voice playback on room switches
+     and user logout.
+
+E. TESTING & QUALITY ASSURANCE
+   - Added and ran automated unit and integration tests across the codebase.
+   - Verified 406 / 406 test cases pass with 0 failures.
+   - Verified ESBuild production bundling with zero errors.
+   - Verified clean Electron application startup (`--test-startup`).
+
+
+3. FILES MODIFIED / CREATED
+--------------------------------------------------------------------------------
+1. `windows/src/renderer/voice-recorder.js` (Created)
+   - Voice recording controller, permission handling, audio format fallback.
+2. `windows/src/api/mime-validator.js` (Updated)
+   - Multi-pattern magic byte validator for MP3 (ID3/MPEG frame) and AAC.
+3. `windows/src/main/main.js` (Updated)
+   - Robust S3 PUT header parsing and attachment download readiness polling.
+4. `windows/src/renderer/app.js` (Updated)
+   - Voice recorder composer wiring, optimistic voice rendering, media retry
+     handling, attachment error state management, and lifecycle cleanup.
+5. `windows/src/renderer/chat-shell-state.js` (Updated)
+   - Helper utilities for optimistic voice messages and audio previews.
+6. `windows/src/renderer/styles.css` (Updated)
+   - Voice recording composer bar, waveforms, retry buttons, and audio player styles.
+7. `windows/src/renderer/index.html` (Updated)
+   - Composer mic button and recording container elements.
+8. `windows/tests/voice-recorder.test.js` & `windows/tests/voice-and-media-bugs.test.js` (Created)
+   - Test suites for voice recorder lifecycle, MIME checks, and edge cases.
+
+
+4. VERIFICATION STATUS
+--------------------------------------------------------------------------------
+- Test Suite: 406 passed, 0 failed (46 test suites)
+- Bundle Build: Success (dist/main/main.js, dist/preload/preload.cjs, dist/renderer/app.js)
+- Startup Check: Passed (window ready-to-show)
+- Android/Reference Files: Completely untouched (0 modifications outside windows/)
+
+================================================================================
+END OF REPORT
+================================================================================

@@ -1,0 +1,44 @@
+appId: com.ollacore.chat.desktop
+productName: OllaChat
+copyright: Copyright © 2026 Ollacore
+
+protocols:
+  - name: OllaChat Protocol
+    schemes:
+      - ollachat
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - from: .
+    filter:
+      - dist/**/*
+      - package.json
+      - node_modules/undici/**/*
+      - node_modules/sqlite3/**/*
+      - node_modules/bindings/**/*
+      - node_modules/file-uri-to-path/**/*
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  signAndEditExecutable: false
+  forceCodeSigning: false
+
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: OllaChat
+
+portable:
+  artifactName: ${productName}-Portable-${version}-${arch}.${ext}

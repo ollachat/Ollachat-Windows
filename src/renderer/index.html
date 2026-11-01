@@ -1,0 +1,2545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' https: wss:;">
+  <title>OllaChat</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- Screen 1: Phone Input Screen -->
+    <div id="screen-phone" class="screen-view auth-screen active">
+      <div class="auth-wrapper">
+        <div class="brand-hero">
+          <div class="logo-icon-lg">OC</div>
+          <h1>Welcome to OllaChat</h1>
+          <p class="hero-subtext">Enter your phone number to sign in or get started</p>
+        </div>
+
+        <div class="card auth-card">
+          <div id="phone-error" class="error-banner hidden"></div>
+
+          <form id="form-phone" class="auth-form" onsubmit="return false;">
+            <div class="form-group">
+              <label for="country-select">Country / Region</label>
+              <select id="country-select" class="input-field">
+                <option value="+91" selected>India (+91)</option>
+                <option value="+1">United States / Canada (+1)</option>
+                <option value="+44">United Kingdom (+44)</option>
+                <option value="+971">United Arab Emirates (+971)</option>
+                <option value="+966">Saudi Arabia (+966)</option>
+                <option value="+65">Singapore (+65)</option>
+                <option value="+61">Australia (+61)</option>
+                <option value="+49">Germany (+49)</option>
+                <option value="+33">France (+33)</option>
+                <option value="+234">Nigeria (+234)</option>
+                <option value="+55">Brazil (+55)</option>
+                <option value="+27">South Africa (+27)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="phone-input">Phone Number</label>
+              <div class="phone-input-group">
+                <span id="country-prefix" class="prefix-tag">+91</span>
+                <input
+                  type="tel"
+                  id="phone-input"
+                  class="input-field phone-field"
+                  placeholder="98765 43210"
+                  autocomplete="tel"
+                  required
+                />
+              </div>
+              <span class="field-hint">International E.164 phone format</span>
+            </div>
+
+            <button type="submit" id="btn-request-otp" class="btn btn-primary">
+              <span class="btn-text">Continue</span>
+              <span class="spinner hidden"></span>
+            </button>
+          </form>
+
+          <div class="security-badge">
+            <span class="lock-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+            <span>End-to-End Encrypted Authentication via Ollacore API</span>
+          </div>
+        </div>
+
+        <footer class="app-footer">
+          <span>OllaChat Desktop • Windows x64</span>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Screen 2: OTP Verification Screen -->
+    <div id="screen-otp" class="screen-view auth-screen">
+      <div class="auth-wrapper">
+        <div class="brand-hero">
+          <div class="logo-icon-lg">OC</div>
+          <h1>Verify Phone Number</h1>
+          <p class="hero-subtext">
+            Code sent to <strong id="display-otp-phone">+91 ...</strong>
+            <button type="button" id="btn-back-phone" class="btn-link">Change</button>
+          </p>
+        </div>
+
+        <div class="card auth-card">
+          <div id="otp-error" class="error-banner hidden"></div>
+
+          <form id="form-otp" class="auth-form" onsubmit="return false;">
+            <div class="form-group">
+              <label for="otp-input">6-Digit Verification Code</label>
+              <input
+                type="text"
+                id="otp-input"
+                class="input-field otp-field"
+                maxlength="6"
+                placeholder="· · · · · ·"
+                autocomplete="one-time-code"
+                required
+              />
+              <span class="field-hint">Enter the 6-digit SMS verification code</span>
+            </div>
+
+            <button type="submit" id="btn-verify-otp" class="btn btn-primary">
+              <span class="btn-text">Verify &amp; Continue</span>
+              <span class="spinner hidden"></span>
+            </button>
+
+            <div class="resend-container">
+              <span id="cooldown-text" class="cooldown-text">Resend available in <strong id="cooldown-seconds">60</strong>s</span>
+              <button type="button" id="btn-resend-otp" class="btn btn-secondary hidden">Resend Code</button>
+            </div>
+          </form>
+        </div>
+
+        <footer class="app-footer">
+          <span>OllaChat Desktop • Windows x64</span>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Screen 3: Authenticated Main Chat Application Shell -->
+    <div id="screen-authenticated" class="screen-view chat-shell-view">
+      
+      <!-- Top Application Bar -->
+      <header class="chat-app-bar">
+        <div class="app-bar-brand">
+          <div class="brand-logo-badge">OC</div>
+          <span class="app-bar-title">OllaChat</span>
+        </div>
+
+        <div class="app-bar-status">
+          <div id="ws-indicator" class="ws-status-pill state-disconnected" title="Gateway connection status">
+            <span class="status-dot"></span>
+            <span id="ws-status-label" class="status-label">Disconnected</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Main Shell Body (Navigation Rail + Sidebar + Chat Area) -->
+      <div class="chat-shell-body">
+
+        <!-- Far-Left Navigation Rail -->
+        <nav class="nav-rail" id="nav-rail" aria-label="Application Navigation">
+          <div class="nav-rail-top">
+            <button type="button" class="nav-rail-btn active" id="nav-item-chats" title="Chats" aria-label="Chats" aria-current="page">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span class="nav-rail-tooltip">Chats</span>
+            </button>
+            <button type="button" class="nav-rail-btn" id="nav-item-calls" title="Calls" aria-label="Calls">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+              <span class="nav-rail-tooltip">Calls</span>
+            </button>
+            <button type="button" class="nav-rail-btn" id="nav-item-archived" title="Archived" aria-label="Archived">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect width="22" height="5" x="1" y="3"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+              <span class="nav-rail-tooltip">Archived</span>
+            </button>
+          </div>
+
+          <div class="nav-rail-bottom">
+            <button type="button" class="nav-rail-btn" id="btn-settings" title="Settings" aria-label="Settings">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              <span class="nav-rail-tooltip">Settings</span>
+            </button>
+            <button type="button" class="nav-rail-btn nav-rail-btn-danger" id="btn-logout" title="Log Out" aria-label="Log Out">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              <span class="nav-rail-tooltip">Log Out</span>
+            </button>
+            <button type="button" class="nav-rail-btn nav-rail-avatar-btn" id="user-profile-trigger" title="Profile" aria-label="Profile">
+              <div id="current-user-avatar" class="avatar avatar-user avatar-rail">OC</div>
+              <span class="nav-rail-tooltip" id="rail-profile-tooltip">Profile</span>
+              <span id="current-user-name" class="visually-hidden">Loading...</span>
+              <span id="current-user-phone" class="visually-hidden">Loading...</span>
+            </button>
+          </div>
+        </nav>
+
+        <!-- Left Column: Conversation Sidebar -->
+        <aside class="chat-sidebar" id="chat-sidebar">
+          
+          <!-- Sidebar Header / Search -->
+          <div class="sidebar-header">
+            <div class="sidebar-header-top">
+              <h2 class="sidebar-title">Chats</h2>
+              <div class="sidebar-actions">
+                <button type="button" id="btn-new-chat" class="btn-icon" title="New Chat or Group" aria-label="New chat or group">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="search-box">
+              <span class="search-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+              <input
+                type="search"
+                id="conversation-search"
+                class="search-input"
+                placeholder="Search or start new chat"
+                aria-label="Search conversations"
+              />
+              <button type="button" id="btn-clear-search" class="btn-clear-search hidden" title="Clear search" aria-label="Clear search"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+            <!-- Chat List Filter Row -->
+            <div class="chat-filter-row" id="chat-filter-row" role="tablist" aria-label="Conversation filters">
+              <button type="button" class="chat-filter-btn active" data-filter="all" id="filter-btn-all" role="tab" aria-selected="true">All</button>
+              <button type="button" class="chat-filter-btn" data-filter="unread" id="filter-btn-unread" role="tab" aria-selected="false">
+                <span>Unread</span>
+                <span class="filter-count hidden" id="filter-count-unread">0</span>
+              </button>
+              <button type="button" class="chat-filter-btn" data-filter="favourites" id="filter-btn-favourites" role="tab" aria-selected="false">Favourites</button>
+              <button type="button" class="chat-filter-btn" data-filter="groups" id="filter-btn-groups" role="tab" aria-selected="false">
+                <span>Groups</span>
+                <span class="filter-count" id="filter-count-groups">0</span>
+              </button>
+              <div id="custom-filters-container" class="custom-filters-container"></div>
+              <button type="button" class="chat-filter-btn chat-filter-btn-add" id="filter-btn-add" title="Create new list" aria-label="Create new list">
+                <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Conversation List Container -->
+          <div id="conversation-list-container" class="conversation-list-container">
+            
+            <!-- Loading State -->
+            <div id="inbox-loading" class="inbox-state-panel hidden">
+              <div class="spinner-inline"></div>
+              <span>Loading conversations...</span>
+            </div>
+
+            <!-- Error State -->
+            <div id="inbox-error" class="inbox-state-panel hidden">
+              <span class="state-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+              <span id="inbox-error-message" class="state-text">Failed to load conversations</span>
+              <button type="button" id="btn-retry-inbox" class="btn btn-secondary btn-sm">Retry</button>
+            </div>
+
+            <!-- Empty State -->
+            <div id="inbox-empty" class="inbox-state-panel hidden">
+              <div class="empty-chats-icon"><svg class="ui-icon ui-icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+              <h3 class="state-title">No conversations yet</h3>
+              <p class="state-desc">When you connect with contacts, your chats will appear here.</p>
+            </div>
+
+            <!-- No Search Matches State -->
+            <div id="inbox-no-search" class="inbox-state-panel hidden">
+              <span class="state-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+              <span class="state-text">No chats match your search</span>
+            </div>
+
+            <!-- Empty Custom List State -->
+            <div id="inbox-empty-custom-list" class="inbox-state-panel hidden">
+              <div class="empty-chats-icon"><svg class="ui-icon ui-icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></div>
+              <h3 class="state-title" id="empty-custom-list-title">No chats in this list</h3>
+              <p class="state-desc">Add chats to organize your conversations.</p>
+              <button type="button" id="btn-empty-edit-list" class="btn btn-secondary btn-sm">Edit list</button>
+            </div>
+
+            <!-- Actual Conversation List -->
+            <div id="conversation-list" class="conversation-items" role="list">
+              <!-- Dynamically rendered items -->
+            </div>
+          </div>
+        </aside>
+
+        <!-- Left Column (Archived View): Archived Chats Sidebar -->
+        <aside class="chat-sidebar archived-sidebar hidden" id="archived-sidebar" aria-label="Archived Chats">
+          <div class="sidebar-header">
+            <div class="sidebar-header-top">
+              <h2 class="sidebar-title">Archived</h2>
+            </div>
+            <div class="search-box">
+              <span class="search-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+              <input
+                type="search"
+                id="archived-search"
+                class="search-input"
+                placeholder="Search archived chats"
+                aria-label="Search archived chats"
+              />
+              <button type="button" id="btn-clear-archived-search" class="btn-clear-search hidden" title="Clear search" aria-label="Clear search"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+          </div>
+
+          <div id="archived-list-container" class="conversation-list-container">
+            <!-- Empty State -->
+            <div id="archived-empty" class="inbox-state-panel hidden">
+              <div class="empty-chats-icon"><svg class="ui-icon ui-icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect width="22" height="5" x="1" y="3"/><line x1="10" y1="12" x2="14" y2="12"/></svg></div>
+              <h3 class="state-title">No archived chats</h3>
+              <p class="state-desc">Chats you archive will appear here.</p>
+            </div>
+
+            <!-- No Search Matches State -->
+            <div id="archived-no-search" class="inbox-state-panel hidden">
+              <span class="state-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+              <span class="state-text">No archived chats match your search</span>
+            </div>
+
+            <!-- Actual Archived Conversation List -->
+            <div id="archived-conversation-list" class="conversation-items" role="list">
+              <!-- Dynamically rendered archived items -->
+            </div>
+          </div>
+        </aside>
+
+        <!-- Dedicated Calls Page View -->
+        <div id="calls-view" class="calls-view hidden" aria-label="Calls View">
+          <aside class="chat-sidebar calls-sidebar" id="calls-sidebar">
+            <div class="sidebar-header">
+              <div class="sidebar-header-top">
+                <h2 class="sidebar-title">Calls</h2>
+              </div>
+              <div class="search-box">
+                <span class="search-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+                <input
+                  type="search"
+                  id="calls-search"
+                  class="search-input"
+                  placeholder="Search name, number or username"
+                  aria-label="Search calls"
+                />
+                <button type="button" id="btn-clear-calls-search" class="btn-clear-search hidden" title="Clear search" aria-label="Clear search"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+              </div>
+            </div>
+
+            <div id="calls-list-container" class="conversation-list-container">
+              <!-- Empty State -->
+              <div id="calls-empty" class="inbox-state-panel hidden">
+                <div class="empty-chats-icon"><svg class="ui-icon ui-icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+                <h3 class="state-title">No calls yet</h3>
+                <p class="state-desc">Your call history will appear here.</p>
+              </div>
+
+              <!-- No Search Matches State -->
+              <div id="calls-no-search" class="inbox-state-panel hidden">
+                <span class="state-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+                <span class="state-text">No calls match your search</span>
+              </div>
+
+              <!-- Call History Items -->
+              <div id="calls-history-list" class="conversation-items" role="list">
+                <!-- Dynamically rendered call history items -->
+              </div>
+            </div>
+          </aside>
+
+          <!-- Right Column: Calls Main Area -->
+          <div class="chat-main-area calls-main-area">
+            <div class="chat-empty-panel">
+              <div class="empty-panel-content">
+                <div class="welcome-logo-badge"><svg class="ui-icon ui-icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+                <h2 class="welcome-title">Calls</h2>
+                <p class="welcome-desc">
+                  Select a call or participant to start or return a voice or video call.
+                </p>
+                <div class="security-lock-note">
+                  <span class="lock-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+                  <span>End-to-end encrypted audio &amp; video calling</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Main Chat Area -->
+        <main class="chat-main-area" id="chat-main-area">
+
+          <!-- View A: Welcome / Empty State Panel (when no conversation is selected) -->
+          <div id="chat-empty-panel" class="chat-empty-panel">
+            <div class="empty-panel-content">
+              <div class="welcome-logo-badge">OC</div>
+              <h2 class="welcome-title">OllaChat for Windows</h2>
+              <p class="welcome-desc">
+                Select a conversation from the sidebar to view messages, or start a new direct chat.
+              </p>
+              <div class="security-lock-note">
+                <span class="lock-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+                <span>End-to-end encrypted messaging powered by Ollacore</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- View B: Selected Conversation Panel (when a conversation is selected) -->
+          <div id="chat-selected-panel" class="chat-selected-panel hidden">
+            
+            <!-- Top Chat Header -->
+            <header class="chat-header">
+              <div id="chat-header-info" class="chat-header-info" role="button" tabindex="0" title="Click for chat info">
+                <div id="selected-chat-avatar" class="avatar avatar-chat">--</div>
+                <div class="chat-header-meta">
+                  <h2 id="selected-chat-name" class="chat-header-title">Chat Name</h2>
+                  <span id="selected-chat-subtitle" class="chat-header-subtitle">Chat Info</span>
+                </div>
+              </div>
+              <div class="chat-header-actions">
+                <button type="button" id="btn-start-voice-call" class="btn-icon btn-call" title="Start voice call" aria-label="Start voice call">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                </button>
+                <button type="button" id="btn-start-video-call" class="btn-icon btn-call" title="Start video call" aria-label="Start video call">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+                </button>
+                <button type="button" id="btn-chat-search" class="btn-icon" title="Search messages" aria-label="Search messages">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                </button>
+                <button type="button" id="btn-group-info" class="btn-icon hidden" title="Group info" aria-label="Group info">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                </button>
+                <button type="button" id="btn-chat-theme" class="btn-icon" title="Chat theme" aria-label="Chat theme">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13 0-.92.75-1.67 1.67-1.67h2c3.05 0 5.56-2.5 5.56-5.55C22 6.01 17.46 2 12 2z"/><circle cx="7.5" cy="11.5" r="1.2" fill="currentColor"/><circle cx="10" cy="7.5" r="1.2" fill="currentColor"/><circle cx="14" cy="7.5" r="1.2" fill="currentColor"/><circle cx="16.5" cy="11.5" r="1.2" fill="currentColor"/></svg>
+                </button>
+                <button type="button" id="btn-chat-menu" class="btn-icon" title="More options" aria-label="More options" aria-haspopup="menu" aria-expanded="false">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                </button>
+              </div>
+            </header>
+
+            <!-- Pinned Message Bar (WhatsApp Desktop style) -->
+            <div id="chat-pinned-bar" class="chat-pinned-bar hidden" role="region" aria-label="Pinned message">
+              <div class="chat-pinned-bar-content" id="chat-pinned-bar-content" role="button" tabindex="0" title="Go to pinned message">
+                <span class="chat-pinned-bar-icon" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="17" x2="12" y2="22"/>
+                    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a1 1 0 0 0 0-2H8a1 1 0 0 0 0 2h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
+                  </svg>
+                </span>
+                <div class="chat-pinned-bar-text">
+                  <div class="chat-pinned-bar-header-line">
+                    <span class="chat-pinned-bar-title">Pinned</span>
+                    <span id="chat-pinned-bar-counter" class="chat-pinned-bar-counter hidden"></span>
+                  </div>
+                  <div class="chat-pinned-bar-snippet" id="chat-pinned-bar-snippet"></div>
+                  <div class="chat-pinned-bar-expiry" id="chat-pinned-bar-expiry"></div>
+                </div>
+              </div>
+              <div class="chat-pinned-bar-actions">
+                <button type="button" id="btn-pinned-prev" class="btn-icon btn-pinned-nav hidden" title="Previous pinned message" aria-label="Previous pinned message">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <button type="button" id="btn-pinned-next" class="btn-icon btn-pinned-nav hidden" title="Next pinned message" aria-label="Next pinned message">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+                <button type="button" id="btn-pinned-unpin" class="btn-icon btn-pinned-unpin" title="Unpin message" aria-label="Unpin message">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- In-Chat Search Bar -->
+            <div id="chat-search-bar" class="chat-search-bar hidden" role="search" aria-label="Search in conversation">
+              <div class="chat-search-input-wrapper">
+                <span class="chat-search-icon" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+                <input
+                  type="text"
+                  id="chat-search-input"
+                  class="chat-search-input"
+                  placeholder="Search in conversation..."
+                  aria-label="Search messages"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button
+                  type="button"
+                  id="btn-clear-chat-search"
+                  class="btn-icon btn-search-clear hidden"
+                  title="Clear search"
+                  aria-label="Clear search"
+                ><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+              </div>
+              <div class="chat-search-controls">
+                <span id="chat-search-count" class="chat-search-count" aria-live="polite"></span>
+                <button
+                  type="button"
+                  id="btn-prev-search-result"
+                  class="btn-icon btn-search-nav"
+                  title="Previous match (Shift+Enter)"
+                  aria-label="Previous match"
+                  disabled
+                ><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg></button>
+                <button
+                  type="button"
+                  id="btn-next-search-result"
+                  class="btn-icon btn-search-nav"
+                  title="Next match (Enter)"
+                  aria-label="Next match"
+                  disabled
+                ><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></button>
+                <button
+                  type="button"
+                  id="btn-close-chat-search"
+                  class="btn-icon btn-search-close"
+                  title="Close search (Esc)"
+                  aria-label="Close search"
+                ><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+              </div>
+            </div>
+
+            <!-- In-Chat Search Results Dropdown/Panel -->
+            <div id="chat-search-results-panel" class="chat-search-results-panel hidden" role="region" aria-label="Search results">
+              <div id="chat-search-status" class="chat-search-status hidden"></div>
+              <div id="chat-search-results-list" class="chat-search-results-list"></div>
+            </div>
+
+            <!-- Message Selection Action Bar (Multi-message selection mode) -->
+            <div id="message-selection-bar" class="message-selection-bar hidden" role="toolbar" aria-label="Selected messages">
+              <div class="selection-bar-left">
+                <button type="button" id="btn-cancel-selection" class="btn-icon" title="Cancel selection" aria-label="Cancel selection">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+                <span id="selection-count-label" class="selection-count-label">0 selected</span>
+              </div>
+              <div class="selection-bar-right">
+                <button type="button" id="btn-delete-selected" class="btn btn-secondary btn-sm" title="Delete selected messages" disabled>
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  <span>Delete</span>
+                </button>
+                <button type="button" id="btn-forward-selected" class="btn btn-primary btn-sm" title="Forward selected messages" disabled>
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
+                  <span>Forward</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Message Area Container (Phase 4C) -->
+            <div id="chat-messages-container" class="chat-messages-container">
+              <!-- State A: Messages Loading Spinner -->
+              <div id="messages-loading" class="messages-state-view hidden">
+                <span class="spinner spinner-lg"></span>
+                <span class="state-label">Loading messages...</span>
+              </div>
+
+              <!-- State B: Messages Error State with Retry Button -->
+              <div id="messages-error" class="messages-state-view error-state hidden">
+                <span class="error-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+                <span id="messages-error-text" class="state-label">Failed to load messages</span>
+                <button type="button" id="btn-retry-messages" class="btn btn-secondary btn-sm">Retry</button>
+              </div>
+
+              <!-- State C: Messages Empty State -->
+              <div id="messages-empty" class="messages-state-view empty-state hidden">
+                <div class="empty-bubble-icon"><svg class="ui-icon ui-icon-xl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                <h3 class="empty-title">No messages yet</h3>
+                <p class="empty-subtitle">Send a message or wave to start the conversation.</p>
+                <div class="security-lock-note-sm">
+                  <span><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> End-to-end encrypted with Ollacore protocol</span>
+                </div>
+              </div>
+
+              <!-- Floating Date Indicator Overlay (WhatsApp Web Style) -->
+              <div id="floating-date-indicator" class="floating-date-indicator hidden" aria-hidden="true">
+                <span id="floating-date-pill" class="floating-date-pill"></span>
+              </div>
+
+              <!-- State D: Scrollable Messages Area -->
+              <div id="messages-scroll-area" class="messages-scroll-area hidden">
+                <!-- Older message loading indicator when paginating -->
+                <div id="older-messages-loader" class="older-messages-loader hidden">
+                  <span class="spinner spinner-sm"></span>
+                  <span>Loading older messages...</span>
+                </div>
+
+                <!-- Messages & Day Dividers Container -->
+                <div id="messages-list" class="messages-list" role="log" aria-live="polite">
+                  <!-- Dynamically safely rendered by app.js using DOM methods -->
+                </div>
+              </div>
+
+              <!-- Floating Scroll to Bottom Button -->
+              <button type="button" id="scroll-bottom-btn" class="scroll-bottom-btn hidden" title="Scroll to bottom" aria-label="Scroll to bottom">
+                <span class="scroll-arrow"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></span>
+                <span id="scroll-bottom-badge" class="scroll-bottom-badge hidden">0</span>
+              </button>
+            </div>
+
+            <!-- Functional Message Composer (Phase 4D) -->
+            <div id="chat-composer-container" class="chat-composer-container">
+              <!-- Emoji Picker Popover -->
+              <div
+                id="emoji-picker-popover"
+                class="emoji-picker-popover hidden"
+                role="dialog"
+                aria-label="Emoji picker"
+                aria-modal="false"
+              >
+                <div class="emoji-picker-header">
+                  <input
+                    type="text"
+                    id="emoji-search-input"
+                    class="emoji-search-input"
+                    placeholder="Search emoji..."
+                    aria-label="Search emojis"
+                    autocomplete="off"
+                  />
+                  <button
+                    type="button"
+                    id="btn-close-emoji-picker"
+                    class="btn-icon emoji-picker-close-btn"
+                    title="Close"
+                    aria-label="Close emoji picker"
+                  ><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                </div>
+                <div id="emoji-picker-categories" class="emoji-picker-categories" role="tablist" aria-label="Emoji categories">
+                  <button type="button" class="emoji-cat-btn active" data-category="smileys" title="Smileys & Emotion" role="tab" aria-selected="true">😀</button>
+                  <button type="button" class="emoji-cat-btn" data-category="people" title="People & Gestures" role="tab" aria-selected="false">👋</button>
+                  <button type="button" class="emoji-cat-btn" data-category="symbols" title="Symbols & Hearts" role="tab" aria-selected="false">❤️</button>
+                  <button type="button" class="emoji-cat-btn" data-category="objects" title="Objects & Activity" role="tab" aria-selected="false">🎉</button>
+                </div>
+                <div id="emoji-picker-grid" class="emoji-picker-grid" role="region" aria-label="Emoji list"></div>
+                <div id="emoji-picker-preview" class="emoji-picker-preview">
+                  <span id="emoji-preview-char" class="emoji-preview-char">😊</span>
+                  <span id="emoji-preview-name" class="emoji-preview-name">smiling face with smiling eyes</span>
+                </div>
+              </div>
+
+              <!-- Attachment Options Popover Menu -->
+              <div
+                id="attachment-menu-popover"
+                class="attachment-menu-popover hidden"
+                role="menu"
+                aria-label="Attachment options"
+              >
+                <button type="button" class="attachment-menu-item" data-category="photos_videos" role="menuitem">
+                  <span class="attachment-item-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></span>
+                  <span class="attachment-item-text">Photos & Videos</span>
+                </button>
+                <button type="button" class="attachment-menu-item" data-category="documents" role="menuitem">
+                  <span class="attachment-item-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
+                  <span class="attachment-item-text">Document</span>
+                </button>
+                <button type="button" class="attachment-menu-item" data-category="audio" role="menuitem">
+                  <span class="attachment-item-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
+                  <span class="attachment-item-text">Audio</span>
+                </button>
+              </div>
+
+              <!-- Upload Progress Indicator Bar -->
+              <div id="composer-upload-bar" class="composer-upload-bar hidden" role="status" aria-live="polite">
+                <div class="upload-bar-info">
+                  <span class="upload-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+                  <span id="upload-filename" class="upload-filename">Uploading file...</span>
+                  <span id="upload-percent" class="upload-percent">0%</span>
+                </div>
+                <div class="upload-progress-track">
+                  <div id="upload-progress-fill" class="upload-progress-fill" style="width: 0%;"></div>
+                </div>
+              </div>
+
+              <!-- Composer Reply Bar -->
+              <div id="composer-reply-banner" class="composer-action-banner hidden" role="region" aria-label="Replying to message">
+                <div class="composer-banner-left">
+                  <span class="composer-banner-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></span>
+                  <div class="composer-banner-content">
+                    <span id="composer-reply-sender" class="composer-banner-title">Reply</span>
+                    <span id="composer-reply-preview" class="composer-banner-text"></span>
+                  </div>
+                </div>
+                <button type="button" id="btn-cancel-reply" class="btn-icon composer-banner-close" title="Cancel reply" aria-label="Cancel reply"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+              </div>
+
+              <!-- Composer Edit Bar -->
+              <div id="composer-edit-banner" class="composer-action-banner hidden" role="region" aria-label="Editing message">
+                <div class="composer-banner-left">
+                  <span class="composer-banner-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+                  <div class="composer-banner-content">
+                    <span class="composer-banner-title">Edit message</span>
+                    <span id="composer-edit-preview" class="composer-banner-text"></span>
+                  </div>
+                </div>
+                <button type="button" id="btn-cancel-edit" class="btn-icon composer-banner-close" title="Cancel edit" aria-label="Cancel edit"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+              </div>
+
+              <!-- Composer Blocked Notice Banner -->
+              <div id="composer-blocked-banner" class="composer-action-banner hidden" role="region" aria-label="Contact is blocked">
+                <div class="composer-banner-left">
+                  <span class="composer-banner-icon text-danger"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
+                  <div class="composer-banner-content">
+                    <span class="composer-banner-title">Contact blocked</span>
+                    <span class="composer-banner-text">You blocked this contact. Unblock to send a message.</span>
+                  </div>
+                </div>
+                <button type="button" id="btn-unblock-composer" class="btn btn-secondary btn-sm" style="margin-left: auto;">Unblock</button>
+              </div>
+
+              <div class="composer-box" id="composer-box">
+                <button
+                  type="button"
+                  id="btn-emoji-picker"
+                  class="btn-icon btn-composer-tool"
+                  title="Emoji"
+                  aria-label="Open emoji picker"
+                  aria-expanded="false"
+                  aria-haspopup="dialog"
+                ><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></button>
+                <button
+                  type="button"
+                  id="btn-attachment-picker"
+                  class="btn-icon btn-composer-tool"
+                  title="Attach media or document"
+                  aria-label="Attach media or document"
+                  aria-expanded="false"
+                  aria-haspopup="menu"
+                ><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l7.9-7.9"/></svg></button>
+                <input
+                  type="file"
+                  id="composer-file-input"
+                  class="hidden-file-input"
+                  style="display: none;"
+                  aria-hidden="true"
+                />
+                <textarea
+                  id="composer-input"
+                  class="composer-input"
+                  rows="1"
+                  placeholder="Type a message"
+                  aria-label="Type a message"
+                ></textarea>
+                <button
+                  type="button"
+                  id="btn-voice-record"
+                  class="btn-icon btn-voice-record"
+                  title="Record voice message"
+                  aria-label="Record voice message"
+                >
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                </button>
+                <button
+                  type="button"
+                  id="btn-send-message"
+                  class="btn-icon btn-send hidden"
+                  title="Send message"
+                  disabled
+                  aria-label="Send message"
+                >
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                </button>
+              </div>
+
+              <!-- Voice Recording Bar (WhatsApp style) -->
+              <div id="composer-recording-bar" class="composer-recording-bar hidden" role="region" aria-label="Voice recording">
+                <button type="button" id="btn-cancel-recording" class="btn-icon btn-recording-cancel" title="Delete recording" aria-label="Delete recording">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                </button>
+                <div class="recording-status">
+                  <span class="recording-pulsing-dot"></span>
+                  <span id="recording-timer" class="recording-timer">0:00</span>
+                </div>
+                <div class="recording-visualizer" id="recording-visualizer" aria-hidden="true">
+                  <div class="recording-wave-bar"></div>
+                  <div class="recording-wave-bar"></div>
+                  <div class="recording-wave-bar"></div>
+                  <div class="recording-wave-bar"></div>
+                  <div class="recording-wave-bar"></div>
+                  <div class="recording-wave-bar"></div>
+                  <div class="recording-wave-bar"></div>
+                  <div class="recording-wave-bar"></div>
+                </div>
+                <button type="button" id="btn-send-recording" class="btn-icon btn-recording-send" title="Send voice message" aria-label="Send voice message">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </main>
+
+        <!-- Right Column: WhatsApp-style Contact Info Panel -->
+        <aside class="contact-info-panel hidden" id="contact-info-panel" aria-label="Contact info">
+          <!-- Contact Info Header -->
+          <div class="contact-info-header">
+            <button type="button" id="btn-close-contact-info" class="btn-icon" title="Close" aria-label="Close contact info">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <h2 class="contact-info-title" id="contact-info-header-title">Contact info</h2>
+          </div>
+
+          <!-- Contact Info Scrollable Body -->
+          <div class="contact-info-body" id="contact-info-body">
+            <!-- Identity Hero Section -->
+            <div class="contact-info-hero">
+              <div class="contact-info-avatar avatar" id="contact-info-avatar">--</div>
+              <div class="contact-info-name-wrap">
+                <h3 class="contact-info-name" id="contact-info-name">Contact Name</h3>
+                <button type="button" id="btn-contact-info-edit-name" class="btn-icon btn-sm hidden" title="Edit group name" aria-label="Edit group name">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                </button>
+              </div>
+              <div id="contact-info-rename-form" class="contact-info-rename-form hidden">
+                <input type="text" id="contact-info-rename-input" class="input-field" maxlength="60" placeholder="Group name (6–60 characters)" />
+                <div class="contact-info-rename-actions">
+                  <button type="button" id="btn-contact-info-save-name" class="btn btn-primary btn-sm">Save</button>
+                  <button type="button" id="btn-contact-info-cancel-name" class="btn btn-secondary btn-sm">Cancel</button>
+                </div>
+              </div>
+              <p class="contact-info-identifier" id="contact-info-identifier"></p>
+              <p class="contact-info-group-meta" id="contact-info-group-meta"></p>
+              <!-- Personal Nickname Trigger & Inline Form (Direct contacts) -->
+              <button type="button" id="btn-contact-info-nickname-action" class="contact-info-nickname-btn hidden" title="Add or edit personal nickname" aria-label="Add or edit personal nickname">
+                <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                <span id="contact-info-nickname-action-label">Add nickname</span>
+              </button>
+              <div id="contact-info-nickname-form" class="contact-info-rename-form hidden">
+                <input type="text" id="contact-info-nickname-input" class="input-field" maxlength="50" placeholder="Personal nickname" />
+                <div class="contact-info-rename-actions">
+                  <button type="button" id="btn-contact-info-save-nickname" class="btn btn-primary btn-sm">Save</button>
+                  <button type="button" id="btn-contact-info-cancel-nickname" class="btn btn-secondary btn-sm">Cancel</button>
+                  <button type="button" id="btn-contact-info-remove-nickname" class="btn btn-danger-sm hidden">Remove</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Primary Action Buttons (Voice, Video, Search) -->
+            <div class="contact-info-actions">
+              <button type="button" class="contact-info-action-btn" id="btn-contact-action-voice" title="Voice call" aria-label="Voice call">
+                <div class="contact-info-action-icon">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                </div>
+                <span class="contact-info-action-label">Audio</span>
+              </button>
+              <button type="button" class="contact-info-action-btn" id="btn-contact-action-video" title="Video call" aria-label="Video call">
+                <div class="contact-info-action-icon">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+                </div>
+                <span class="contact-info-action-label">Video</span>
+              </button>
+              <button type="button" class="contact-info-action-btn" id="btn-contact-action-search" title="Search in chat" aria-label="Search in chat">
+                <div class="contact-info-action-icon">
+                  <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                </div>
+                <span class="contact-info-action-label">Search</span>
+              </button>
+            </div>
+
+            <div class="contact-info-divider"></div>
+
+            <!-- About / Bio Section (only if available) -->
+            <div class="contact-info-section hidden" id="contact-info-about-section">
+              <span class="contact-info-section-title" id="contact-info-about-title">About</span>
+              <p class="contact-info-about-text" id="contact-info-about-text"></p>
+            </div>
+
+            <!-- Phone / Username Details Section (Direct chats, only if available) -->
+            <div class="contact-info-section hidden" id="contact-info-details-section">
+              <span class="contact-info-section-title">Details</span>
+              <div class="contact-info-detail-row hidden" id="contact-info-server-name-row">
+                <span class="contact-info-detail-label">Profile name</span>
+                <span class="contact-info-detail-value" id="contact-info-server-name-value"></span>
+              </div>
+              <div class="contact-info-detail-row" id="contact-info-phone-row">
+                <span class="contact-info-detail-label">Phone</span>
+                <span class="contact-info-detail-value" id="contact-info-phone-value"></span>
+              </div>
+              <div class="contact-info-detail-row hidden" id="contact-info-username-row">
+                <span class="contact-info-detail-label">Username</span>
+                <span class="contact-info-detail-value" id="contact-info-username-value"></span>
+              </div>
+            </div>
+
+            <!-- Participants Section (Group chats only) -->
+            <div class="contact-info-section hidden" id="contact-info-participants-section">
+              <div class="contact-info-section-header">
+                <span class="contact-info-section-title" id="contact-info-participants-count">Participants</span>
+              </div>
+              <!-- WhatsApp-style Add people row (visible if authorized admin) -->
+              <div class="contact-info-add-participant-row hidden" id="btn-group-add-people" role="button" tabindex="0" aria-label="Add people">
+                <div class="avatar avatar-sm avatar-add-people">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+                </div>
+                <span class="contact-info-add-participant-label">Add people</span>
+              </div>
+              <div class="contact-info-participants-loading hidden" id="contact-info-participants-loading">
+                <span class="spinner spinner-sm"></span>
+                <span>Loading participants...</span>
+              </div>
+              <div class="contact-info-participants-list" id="contact-info-participants-list">
+                <!-- Safely rendered by app.js -->
+              </div>
+            </div>
+
+            <!-- Media, links and docs row -->
+            <div class="contact-info-nav-row" id="contact-info-media-row" role="button" tabindex="0" aria-label="Media, links and docs">
+              <div class="contact-info-nav-row-left">
+                <span class="contact-info-nav-row-icon" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></span>
+                <span class="contact-info-nav-row-label">Media, links and docs</span>
+              </div>
+              <span class="contact-info-nav-row-arrow" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            </div>
+
+            <!-- Starred messages row -->
+            <div class="contact-info-nav-row" id="contact-info-starred-row" role="button" tabindex="0" aria-label="Starred messages">
+              <div class="contact-info-nav-row-left">
+                <span class="contact-info-nav-row-icon" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
+                <span class="contact-info-nav-row-label">Starred messages</span>
+              </div>
+              <span class="contact-info-nav-row-arrow" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            </div>
+
+            <!-- Pinned messages row -->
+            <div class="contact-info-nav-row" id="contact-info-pinned-row" role="button" tabindex="0" aria-label="Pinned messages">
+              <div class="contact-info-nav-row-left">
+                <span class="contact-info-nav-row-icon" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a1 1 0 0 0 0-2H8a1 1 0 0 0 0 2h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg></span>
+                <span class="contact-info-nav-row-label">Pinned messages</span>
+              </div>
+              <span class="contact-info-nav-row-arrow" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            </div>
+
+            <!-- Add to favourites row -->
+            <div class="contact-info-nav-row" id="contact-info-fav-row" role="button" tabindex="0" aria-label="Add to favourites">
+              <div class="contact-info-nav-row-left">
+                <span class="contact-info-nav-row-icon" id="contact-info-fav-icon" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                </span>
+                <span class="contact-info-nav-row-label" id="contact-info-fav-label">Add to favourites</span>
+              </div>
+            </div>
+
+            <!-- Mute Notifications Row -->
+            <div class="contact-info-nav-row" id="contact-info-mute-row" role="button" tabindex="0" aria-label="Mute notifications">
+              <div class="contact-info-nav-row-left">
+                <span class="contact-info-nav-row-icon" id="contact-info-mute-icon" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+                </span>
+                <span class="contact-info-nav-row-label" id="contact-info-mute-label">Mute notifications</span>
+              </div>
+              <span class="contact-info-nav-row-value" id="contact-info-mute-value" style="font-size: 13px; color: var(--text-muted); margin-right: 6px;">Off</span>
+              <span class="contact-info-nav-row-arrow" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            </div>
+
+            <!-- Add to list row -->
+            <div class="contact-info-nav-row" id="contact-info-lists-row" role="button" tabindex="0" aria-label="Add to list">
+              <div class="contact-info-nav-row-left">
+                <span class="contact-info-nav-row-icon" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                </span>
+                <span class="contact-info-nav-row-label">Add to list</span>
+              </div>
+              <span class="contact-info-nav-row-arrow" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            </div>
+
+            <div class="contact-info-divider"></div>
+
+            <!-- Chat Actions: Clear Chat -->
+            <div class="contact-info-nav-row" id="contact-info-clear-chat-row" role="button" tabindex="0" aria-label="Clear chat">
+              <div class="contact-info-nav-row-left">
+                <span class="contact-info-nav-row-icon" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+                </span>
+                <span class="contact-info-nav-row-label">Clear chat</span>
+              </div>
+            </div>
+
+            <div class="contact-info-divider"></div>
+
+            <!-- Danger Zone Actions -->
+            <!-- Block Contact (Direct chats only) -->
+            <div class="contact-info-nav-row danger-row hidden" id="contact-info-block-row" role="button" tabindex="0" aria-label="Block contact">
+              <div class="contact-info-nav-row-left">
+                <span class="contact-info-nav-row-icon text-danger" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+                </span>
+                <span class="contact-info-nav-row-label text-danger" id="contact-info-block-label">Block</span>
+              </div>
+            </div>
+
+            <!-- Exit Group (Groups only, when user is member) -->
+            <div class="contact-info-nav-row danger-row hidden" id="contact-info-exit-group-row" role="button" tabindex="0" aria-label="Exit group">
+              <div class="contact-info-nav-row-left">
+                <span class="contact-info-nav-row-icon text-danger" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                </span>
+                <span class="contact-info-nav-row-label text-danger">Exit group</span>
+              </div>
+            </div>
+
+            <!-- Delete Chat (Direct chats, or exited groups) -->
+            <div class="contact-info-nav-row danger-row hidden" id="contact-info-delete-chat-row" role="button" tabindex="0" aria-label="Delete chat">
+              <div class="contact-info-nav-row-left">
+                <span class="contact-info-nav-row-icon text-danger" aria-hidden="true">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                </span>
+                <span class="contact-info-nav-row-label text-danger">Delete chat</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Media, Links and Docs Browser Panel -->
+        <aside id="media-browser-panel" class="media-browser-panel hidden" role="complementary" aria-label="Media, links and docs">
+          <div class="media-browser-header">
+            <button type="button" id="btn-close-media-browser" class="btn-icon" title="Back" aria-label="Back to contact info">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <h2 class="media-browser-title">Media, links and docs</h2>
+          </div>
+          <div class="media-browser-tabs" id="media-browser-tabs" role="tablist">
+            <button type="button" class="media-browser-tab active" role="tab" data-tab="media" id="mbtab-media" aria-selected="true">Media</button>
+            <button type="button" class="media-browser-tab" role="tab" data-tab="links" id="mbtab-links" aria-selected="false">Links</button>
+            <button type="button" class="media-browser-tab" role="tab" data-tab="docs" id="mbtab-docs" aria-selected="false">Docs</button>
+          </div>
+          <div class="media-browser-body" id="media-browser-body">
+            <!-- Tab: Media (images + videos) -->
+            <div id="mb-tab-media" class="mb-tab-pane" role="tabpanel" aria-labelledby="mbtab-media">
+              <div id="mb-media-loading" class="mb-loading hidden"><span class="spinner spinner-sm"></span><span>Loading media...</span></div>
+              <div id="mb-media-empty" class="mb-empty hidden"><svg class="ui-icon ui-icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg><p>No media yet</p></div>
+              <div id="mb-media-grid" class="mb-media-grid"></div>
+            </div>
+            <!-- Tab: Links -->
+            <div id="mb-tab-links" class="mb-tab-pane hidden" role="tabpanel" aria-labelledby="mbtab-links">
+              <div id="mb-links-loading" class="mb-loading hidden"><span class="spinner spinner-sm"></span><span>Finding links...</span></div>
+              <div id="mb-links-empty" class="mb-empty hidden"><svg class="ui-icon ui-icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><p>No links shared yet</p></div>
+              <div id="mb-links-list" class="mb-links-list"></div>
+            </div>
+            <!-- Tab: Docs -->
+            <div id="mb-tab-docs" class="mb-tab-pane hidden" role="tabpanel" aria-labelledby="mbtab-docs">
+              <div id="mb-docs-loading" class="mb-loading hidden"><span class="spinner spinner-sm"></span><span>Finding documents...</span></div>
+              <div id="mb-docs-empty" class="mb-empty hidden"><svg class="ui-icon ui-icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg><p>No documents shared yet</p></div>
+              <div id="mb-docs-list" class="mb-docs-list"></div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Starred Messages Panel -->
+        <aside id="starred-messages-panel" class="starred-messages-panel hidden" role="complementary" aria-label="Starred messages">
+          <div class="starred-messages-header">
+            <button type="button" id="btn-close-starred-messages" class="btn-icon" title="Back" aria-label="Back to contact info">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <h2 class="starred-messages-title">Starred messages</h2>
+          </div>
+          <div id="starred-messages-body" class="starred-messages-body">
+            <div id="starred-loading" class="mb-loading hidden"><span class="spinner spinner-sm"></span><span>Loading starred messages...</span></div>
+            <div id="starred-empty" class="mb-empty hidden"><svg class="ui-icon ui-icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg><p>No starred messages in this conversation</p></div>
+            <div id="starred-list" class="starred-list"></div>
+          </div>
+        </aside>
+
+        <!-- Pinned Messages Panel -->
+        <aside id="pinned-messages-panel" class="starred-messages-panel hidden" role="complementary" aria-label="Pinned messages">
+          <div class="starred-messages-header">
+            <button type="button" id="btn-close-pinned-messages" class="btn-icon" title="Back" aria-label="Back to contact info">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <h2 class="starred-messages-title">Pinned messages</h2>
+          </div>
+          <div id="pinned-messages-body" class="starred-messages-body">
+            <div id="pinned-empty" class="mb-empty hidden"><svg class="ui-icon ui-icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a1 1 0 0 0 0-2H8a1 1 0 0 0 0 2h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg><p>No pinned messages in this conversation</p></div>
+            <div id="pinned-list" class="starred-list"></div>
+            <div class="pinned-local-disclosure">Pins are saved on this device.</div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Unified Voice & Video Call Overlay -->
+      <div id="voice-call-overlay" class="voice-call-overlay hidden" role="dialog" aria-modal="true" aria-label="Call">
+        <div class="voice-call-card" id="voice-call-card">
+          <!-- Incoming Call Floating Header (WhatsApp Desktop style) -->
+          <div class="incoming-call-header hidden" id="incoming-call-header">
+            <div class="incoming-call-branding">
+              <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span>OllaChat</span>
+            </div>
+            <div class="incoming-call-header-actions" id="incoming-call-header-actions">
+              <button type="button" id="btn-incoming-call-minimize" class="btn-incoming-minimize" title="Minimize call" aria-label="Minimize incoming call window">
+                <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+              </button>
+              <button type="button" id="btn-incoming-call-close" class="btn-incoming-close" title="Dismiss incoming call" aria-label="Dismiss incoming call">
+                <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="18" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Video & Voice Call Window Controls Header (Active Connected Call) -->
+          <div class="voice-call-header-actions" id="voice-call-header-actions">
+            <button type="button" id="btn-call-minimize" class="btn-call-header-action hidden" title="Minimize call" aria-label="Minimize call window">
+              <span id="call-minimize-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg></span>
+            </button>
+            <button type="button" id="btn-call-popout" class="btn-call-header-action hidden" title="Pop out / Mini floating view" aria-label="Floating call view">
+              <span id="call-popout-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></span>
+            </button>
+            <button type="button" id="btn-call-maximize" class="btn-call-header-action hidden" title="Maximize / Restore" aria-label="Maximize call window">
+              <span id="call-maximize-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg></span>
+            </button>
+          </div>
+
+          <!-- Compact Minimized Floating Call Bar Controls -->
+          <div id="call-minimized-controls" class="call-minimized-controls hidden">
+            <button type="button" id="btn-call-restore" class="btn-minimized-control btn-restore" title="Restore call window" aria-label="Restore call window">
+              <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+            </button>
+            <button type="button" id="btn-call-minimized-mute" class="btn-minimized-control btn-mute" title="Toggle mute" aria-label="Toggle mute">
+              <span id="call-minimized-mute-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></span>
+            </button>
+            <button type="button" id="btn-call-minimized-end" class="btn-minimized-control btn-end" title="End call" aria-label="End call">
+              <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+            </button>
+          </div>
+
+          <!-- Video Stage (active in video mode) -->
+          <div id="video-stage" class="video-stage hidden">
+            <video id="remote-video" class="remote-video" autoplay playsinline></video>
+            <div id="remote-video-placeholder" class="remote-video-placeholder hidden">
+              <span class="placeholder-avatar"><svg class="ui-icon ui-icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/></svg></span>
+              <span class="placeholder-text">Camera is off</span>
+            </div>
+            <video id="local-video" class="local-video" autoplay playsinline muted></video>
+            <div id="local-video-off-badge" class="local-video-off-badge hidden">
+              <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="2" y1="2" x2="22" y2="22"/><path d="M10.41 10.41a2 2 0 0 0 2.83 2.83"/><path d="M13.5 6.5A6.5 6.5 0 0 1 20 13c0 .87-.17 1.7-.48 2.46L22 17.92V8l-6 4v-.5a6.5 6.5 0 0 0-6.5-6.5c-.87 0-1.7.17-2.46.48L9.08 7.42A6.47 6.47 0 0 1 13.5 6.5Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+              <span>Camera Off</span>
+            </div>
+            <div id="screenshare-active-banner" class="screenshare-active-banner hidden">
+              <span class="screenshare-badge-icon">
+                <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              </span>
+              <span>You are sharing your screen</span>
+              <button type="button" id="btn-stop-screenshare-banner" class="btn-stop-screenshare-banner">Stop Sharing</button>
+            </div>
+          </div>
+
+          <div class="voice-call-avatar" id="call-peer-avatar"><svg class="ui-icon ui-icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
+          <div class="voice-call-info">
+            <h3 id="call-peer-name" class="call-peer-name">Contact Name</h3>
+            <p id="call-peer-phone" class="call-peer-phone hidden"></p>
+            <p id="call-status-label" class="call-status-label">Calling...</p>
+            <p id="call-timer-label" class="call-timer-label hidden">00:00</p>
+          </div>
+          <div id="call-error-banner" class="call-error-banner hidden"></div>
+          <div class="voice-call-actions">
+            <button type="button" id="btn-call-mute" class="btn-call-action btn-mute hidden" title="Toggle mute">
+              <span id="call-mute-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></span>
+              <span id="call-mute-text">Mute</span>
+            </button>
+            <button type="button" id="btn-call-camera" class="btn-call-action btn-camera hidden" title="Toggle camera">
+              <span id="call-camera-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg></span>
+              <span id="call-camera-text">Camera</span>
+            </button>
+            <button type="button" id="btn-call-screenshare" class="btn-call-action btn-screenshare hidden" title="Share screen" aria-label="Share screen">
+              <span id="call-screenshare-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/><path d="m10 9 4-4 4 4"/><line x1="14" y1="5" x2="14" y2="13"/></svg></span>
+              <span id="call-screenshare-text">Share</span>
+            </button>
+            <button type="button" id="btn-call-request-video" class="btn-call-action btn-request-video hidden" title="Request video">
+              <span id="call-request-video-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg></span>
+              <span id="call-request-video-text">Video</span>
+            </button>
+            <button type="button" id="btn-call-add-participant" class="btn-call-action btn-add-participant hidden" title="Add people" aria-label="Add people to call">
+              <span id="call-add-participant-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></span>
+              <span id="call-add-participant-text">Add</span>
+            </button>
+            <button type="button" id="btn-call-end" class="btn-call-action btn-hangup hidden" title="End call">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+              <span>End</span>
+            </button>
+            <button type="button" id="btn-call-accept" class="btn-call-action btn-accept hidden" title="Accept call" aria-label="Accept call">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+              <span>Accept</span>
+            </button>
+            <button type="button" id="btn-call-decline" class="btn-call-action btn-decline hidden" title="Decline call" aria-label="Decline call">
+              <svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+              <span>Decline</span>
+            </button>
+          </div>
+        </div>
+        <audio id="remote-voice-audio" autoplay playsinline></audio>
+      </div>
+
+      <!-- Screen Share Source Picker Modal (WhatsApp Style) -->
+      <div id="screenshare-picker-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="screenshare-picker-title">
+        <div class="screenshare-picker-card modal-card">
+          <div class="modal-header">
+            <h3 id="screenshare-picker-title" class="modal-title">Share your screen</h3>
+            <button type="button" id="btn-close-screenshare-picker" class="btn-icon btn-close" aria-label="Close" title="Close">
+              <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          <div class="screenshare-tabs">
+            <button type="button" id="tab-screenshare-entire" class="screenshare-tab active" data-tab="screen">Entire Screen</button>
+            <button type="button" id="tab-screenshare-windows" class="screenshare-tab" data-tab="window">Window</button>
+          </div>
+          <div class="screenshare-sources-container">
+            <div id="screenshare-sources-loading" class="screenshare-sources-loading hidden">
+              <div class="spinner"></div>
+              <p>Loading screens and windows...</p>
+            </div>
+            <div id="screenshare-sources-grid" class="screenshare-sources-grid">
+              <!-- Dynamically populated -->
+            </div>
+            <div id="screenshare-sources-empty" class="screenshare-sources-empty hidden">
+              <p>No available screens or windows found.</p>
+            </div>
+          </div>
+          <div class="modal-footer screenshare-footer">
+            <button type="button" id="btn-cancel-screenshare-picker" class="btn-modal-action btn-secondary">Cancel</button>
+            <button type="button" id="btn-confirm-screenshare-picker" class="btn-modal-action btn-primary" disabled>Share</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings / Profile Modal Dialog -->
+      <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+        <div class="modal-card">
+          <div class="modal-header">
+            <h3 id="settings-modal-title">Settings &amp; Profile</h3>
+            <button type="button" id="btn-close-settings" class="btn-icon btn-close" aria-label="Close settings"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <div class="modal-body">
+            <!-- Inline Profile Edit Status Banner -->
+            <div id="profile-edit-status" class="status-banner hidden" role="status" aria-live="polite"></div>
+
+            <!-- Profile View Mode -->
+            <div id="profile-view-mode">
+              <div class="profile-summary">
+                <div id="modal-user-avatar" class="avatar avatar-lg">OC</div>
+                <div class="modal-user-info">
+                  <h4 id="user-display-name">User Name</h4>
+                  <span id="user-phone" class="modal-phone">+1234567890</span>
+                  <div id="user-about" class="modal-about" title="About">Available on OllaChat</div>
+                </div>
+                <button type="button" id="btn-edit-profile" class="btn-edit-profile" title="Edit profile details">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                  <span>Edit Profile</span>
+                </button>
+              </div>
+              <div class="settings-section">
+                <div class="settings-section-header-title">Appearance</div>
+                <div class="setting-item appearance-setting-item">
+                  <div class="setting-item-left">
+                    <span class="setting-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18c4.97 0 9-4.03 9-9s-4.03-9-9-9z"/></svg></span>
+                    <div class="setting-meta-text">
+                      <span class="setting-label">Theme</span>
+                      <span class="setting-hint">Choose how OllaChat looks on your device</span>
+                    </div>
+                  </div>
+                  <div class="theme-mode-selector" role="radiogroup" aria-label="Theme mode">
+                    <button type="button" class="theme-mode-btn" data-theme-mode="light" id="theme-btn-light" role="radio" aria-checked="false">
+                      <span class="theme-mode-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg></span>
+                      <span class="theme-mode-name">Light</span>
+                    </button>
+                    <button type="button" class="theme-mode-btn" data-theme-mode="dark" id="theme-btn-dark" role="radio" aria-checked="false">
+                      <span class="theme-mode-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></span>
+                      <span class="theme-mode-name">Dark</span>
+                    </button>
+                    <button type="button" class="theme-mode-btn active" data-theme-mode="system" id="theme-btn-system" role="radio" aria-checked="true">
+                      <span class="theme-mode-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span>
+                      <span class="theme-mode-name">System</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="setting-item clickable-setting" id="setting-item-chat-theme" role="button" tabindex="0" title="Customize Chat Theme">
+                  <div class="setting-item-left">
+                    <span class="setting-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13 0-.92.75-1.67 1.67-1.67h2c3.05 0 5.56-2.5 5.56-5.55C22 6.01 17.46 2 12 2z"/><circle cx="7.5" cy="11.5" r="1.2" fill="currentColor"/><circle cx="10" cy="7.5" r="1.2" fill="currentColor"/><circle cx="14" cy="7.5" r="1.2" fill="currentColor"/><circle cx="16.5" cy="11.5" r="1.2" fill="currentColor"/></svg></span>
+                    <div class="setting-meta-text">
+                      <span class="setting-label">Chat Theme</span>
+                      <span class="setting-hint">Presets, bubble styles &amp; wallpapers</span>
+                    </div>
+                  </div>
+                  <span class="setting-arrow"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></span>
+                </div>
+              </div>
+              <div class="settings-section" id="settings-section-notifications">
+                <div class="settings-section-header-title">Notifications</div>
+                <div class="setting-item toggle-setting" id="setting-item-notifications">
+                  <div class="setting-item-left">
+                    <span class="setting-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span>
+                    <div class="setting-meta-text">
+                      <span class="setting-label">Desktop Notifications</span>
+                      <span class="setting-hint">Show native notifications for new messages</span>
+                    </div>
+                  </div>
+                  <label class="toggle-switch" for="setting-toggle-notifications">
+                    <input type="checkbox" id="setting-toggle-notifications" checked />
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                <div class="setting-item toggle-setting" id="setting-item-notification-preview">
+                  <div class="setting-item-left">
+                    <span class="setting-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></span>
+                    <div class="setting-meta-text">
+                      <span class="setting-label">Show Message Preview</span>
+                      <span class="setting-hint">Display sender and message text in notifications</span>
+                    </div>
+                  </div>
+                  <label class="toggle-switch" for="setting-toggle-notification-preview">
+                    <input type="checkbox" id="setting-toggle-notification-preview" checked />
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+              </div>
+              <div class="settings-section" id="settings-section-privacy">
+                <div class="settings-section-header-title">Privacy</div>
+                <div class="setting-item clickable-setting" id="setting-item-blocked-contacts" role="button" tabindex="0" title="Manage Blocked Contacts">
+                  <div class="setting-item-left">
+                    <span class="setting-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
+                    <div class="setting-meta-text">
+                      <span class="setting-label">Blocked Contacts</span>
+                      <span class="setting-hint" id="setting-blocked-count-hint">0 contacts</span>
+                    </div>
+                  </div>
+                  <span class="setting-arrow"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></span>
+                </div>
+              </div>
+              <div class="settings-section" id="settings-section-backup">
+                <div class="settings-section-header-title">Chats &amp; Data</div>
+                <div class="setting-item clickable-setting" id="setting-item-backup-restore" role="button" tabindex="0" title="Manage Chat Backup and Restore">
+                  <div class="setting-item-left">
+                    <span class="setting-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+                    <div class="setting-meta-text">
+                      <span class="setting-label">Chat Backup &amp; Restore</span>
+                      <span class="setting-hint">Create local backup or restore your chat history</span>
+                    </div>
+                  </div>
+                  <span class="setting-arrow"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Profile Edit Mode -->
+            <div id="profile-edit-mode" class="hidden">
+              <div class="profile-summary profile-summary-edit">
+                <div class="avatar-edit-wrapper">
+                  <div id="modal-user-avatar-edit" class="avatar avatar-lg avatar-clickable" tabindex="0" role="button" aria-label="Add profile photo" title="Add profile photo">
+                    <span id="modal-user-avatar-edit-text">OC</span>
+                    <div class="avatar-overlay" id="avatar-edit-overlay">
+                      <span class="avatar-overlay-icon" id="avatar-overlay-icon"><svg class="ui-icon ui-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg></span>
+                    </div>
+                  </div>
+                  <div class="avatar-edit-actions">
+                    <button type="button" id="btn-change-photo" class="btn-photo-action" title="Add profile photo">Add photo</button>
+                    <button type="button" id="btn-remove-photo" class="btn-photo-action text-danger hidden" title="Remove profile photo">Remove photo</button>
+                  </div>
+                </div>
+                <div class="modal-user-info">
+                  <span id="user-phone-edit" class="modal-phone">+1234567890</span>
+                </div>
+              </div>
+              <form id="profile-edit-form" class="settings-section" onsubmit="return false;">
+                <div class="setting-item-edit">
+                  <label for="edit-profile-name" class="setting-label">Display Name</label>
+                  <input type="text" id="edit-profile-name" class="form-input" maxlength="50" placeholder="Enter display name" required autocomplete="name" />
+                </div>
+                <div class="setting-item-edit">
+                  <label for="edit-profile-about" class="setting-label">About</label>
+                  <input type="text" id="edit-profile-about" class="form-input" maxlength="200" placeholder="Available on OllaChat" />
+                </div>
+              </form>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <div id="profile-view-footer" class="modal-footer-buttons">
+              <button type="button" id="btn-modal-logout" class="btn btn-danger-sm">Log Out</button>
+              <button type="button" id="btn-close-settings-footer" class="btn btn-secondary btn-sm">Close</button>
+            </div>
+            <div id="profile-edit-footer" class="modal-footer-buttons end hidden">
+              <button type="button" id="btn-cancel-edit-profile" class="btn btn-secondary btn-sm">Cancel</button>
+              <button type="button" id="btn-save-profile" class="btn btn-primary btn-sm">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat Backup & Restore Modal Dialog -->
+      <div id="backup-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="backup-modal-title">
+        <div class="modal-card modal-card-lg">
+          <div class="modal-header">
+            <h3 id="backup-modal-title">Chat Backup &amp; Restore</h3>
+            <button type="button" id="btn-close-backup-modal" class="btn-icon btn-close" aria-label="Close backup modal"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+
+          <!-- Account Header Banner -->
+          <div class="backup-account-header">
+            <span class="backup-account-icon"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+            <div class="backup-account-meta">
+              <span class="backup-account-label">Active Account</span>
+              <span id="backup-account-id" class="backup-account-name">Loading account...</span>
+            </div>
+          </div>
+
+          <!-- Tabs -->
+          <div class="modal-tabs" role="tablist">
+            <button type="button" id="tab-backup" class="modal-tab active" role="tab" aria-selected="true" aria-controls="panel-backup">
+              Create Backup
+            </button>
+            <button type="button" id="tab-restore" class="modal-tab" role="tab" aria-selected="false" aria-controls="panel-restore">
+              Restore Chats
+            </button>
+          </div>
+
+          <div class="modal-body">
+            <!-- Tab 1: Create Backup Panel -->
+            <div id="panel-backup" class="tab-panel active" role="tabpanel" aria-labelledby="tab-backup">
+              <div class="backup-card">
+                <div class="backup-card-header">
+                  <h4 class="backup-section-title">Local Chat Backup</h4>
+                  <p class="backup-section-desc">
+                    Export a consistent, self-contained snapshot of your messages, conversations, reactions, call logs, and custom lists into a secure backup file (<span class="monospace">.ollabackup</span>).
+                  </p>
+                </div>
+
+                <div class="backup-options">
+                  <label class="backup-checkbox-label">
+                    <input type="checkbox" id="backup-include-attachments" />
+                    <span>Include cached attachments (photos, videos, audio, documents)</span>
+                  </label>
+                  <p class="backup-option-hint">
+                    If unchecked, attachments are excluded to create a smaller backup file. Uncached media will be fetched from server on-demand.
+                  </p>
+                </div>
+
+                <div class="backup-actions">
+                  <button type="button" id="btn-create-backup" class="btn btn-primary">
+                    <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    <span>Create Backup...</span>
+                  </button>
+                </div>
+
+                <div id="backup-status-banner" class="status-banner hidden" role="status" aria-live="polite"></div>
+              </div>
+            </div>
+
+            <!-- Tab 2: Restore Panel -->
+            <div id="panel-restore" class="tab-panel" role="tabpanel" aria-labelledby="tab-restore">
+              <div class="backup-card">
+                <div class="backup-card-header">
+                  <h4 class="backup-section-title">Restore From Backup</h4>
+                  <p class="backup-section-desc">
+                    Restore your chat history and media from a previously exported <span class="monospace">.ollabackup</span> file.
+                  </p>
+                </div>
+
+                <div class="restore-select-step">
+                  <button type="button" id="btn-select-restore-file" class="btn btn-secondary">
+                    <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    <span>Select Backup File...</span>
+                  </button>
+                  <span id="restore-selected-filename" class="restore-filename-label">No file selected</span>
+                </div>
+
+                <div id="restore-status-banner" class="status-banner hidden" role="status" aria-live="polite"></div>
+
+                <!-- Preflight Validation & Confirmation View -->
+                <div id="restore-preflight-view" class="restore-preflight-card hidden">
+                  <div class="preflight-header">
+                    <span class="preflight-badge">Validated Backup</span>
+                    <h5 id="preflight-title">Backup Details</h5>
+                  </div>
+                  <div class="preflight-grid">
+                    <div class="preflight-item">
+                      <span class="preflight-item-label">Created At</span>
+                      <span id="preflight-created-at" class="preflight-item-val">-</span>
+                    </div>
+                    <div class="preflight-item">
+                      <span class="preflight-item-label">Account</span>
+                      <span id="preflight-account" class="preflight-item-val">-</span>
+                    </div>
+                    <div class="preflight-item">
+                      <span class="preflight-item-label">Conversations</span>
+                      <span id="preflight-conversations" class="preflight-item-val">-</span>
+                    </div>
+                    <div class="preflight-item">
+                      <span class="preflight-item-label">Messages</span>
+                      <span id="preflight-messages" class="preflight-item-val">-</span>
+                    </div>
+                    <div class="preflight-item">
+                      <span class="preflight-item-label">Attachments</span>
+                      <span id="preflight-attachments" class="preflight-item-val">-</span>
+                    </div>
+                    <div class="preflight-item">
+                      <span class="preflight-item-label">Integrity</span>
+                      <span id="preflight-integrity" class="preflight-item-val text-success">Verified OK</span>
+                    </div>
+                  </div>
+
+                  <div class="restore-warning-notice">
+                    <span class="warning-icon"><svg class="ui-icon ui-icon-xs text-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+                    <p class="warning-text">
+                      <strong>Warning:</strong> Restoring will replace your current local database with this backup. An automatic safety snapshot of your current chats will be created before restoration.
+                    </p>
+                  </div>
+
+                  <div class="restore-confirmation-actions">
+                    <button type="button" id="btn-cancel-restore" class="btn btn-secondary btn-sm">Cancel</button>
+                    <button type="button" id="btn-confirm-restore" class="btn btn-danger btn-sm">Confirm &amp; Restore</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" id="btn-close-backup-footer" class="btn btn-secondary btn-sm">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- New Chat / Create Group Modal Dialog -->
+      <div id="new-chat-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="new-chat-modal-title">
+        <div class="modal-card modal-card-lg">
+          <div class="modal-header">
+            <h3 id="new-chat-modal-title">New Conversation</h3>
+            <button type="button" id="btn-close-new-chat" class="btn-icon btn-close" aria-label="Close new conversation modal"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+
+          <!-- Tab Navigation -->
+          <div class="modal-tabs" role="tablist">
+            <button type="button" id="tab-direct" class="modal-tab active" role="tab" aria-selected="true" aria-controls="panel-direct">
+              Direct Chat
+            </button>
+            <button type="button" id="tab-group" class="modal-tab" role="tab" aria-selected="false" aria-controls="panel-group">
+              Create Group
+            </button>
+          </div>
+
+          <div class="modal-body">
+            <!-- Tab 1: Direct Chat Panel -->
+            <div id="panel-direct" class="tab-panel active" role="tabpanel" aria-labelledby="tab-direct">
+              <div id="direct-error" class="error-banner hidden"></div>
+
+              <form id="form-direct-chat" onsubmit="return false;">
+                <div class="form-group">
+                  <label for="direct-phone-input">Contact Phone Number</label>
+                  <div class="input-action-group">
+                    <input
+                      type="tel"
+                      id="direct-phone-input"
+                      class="input-field"
+                      placeholder="+15551234567 or international format"
+                      autocomplete="off"
+                      required
+                    />
+                    <button type="button" id="btn-lookup-direct" class="btn btn-secondary btn-sm">
+                      <span class="btn-text">Lookup</span>
+                      <span class="spinner-inline-sm hidden"></span>
+                    </button>
+                  </div>
+                  <span class="field-hint">Search for a registered user by their phone number</span>
+                </div>
+
+                <!-- Matched Contact Card -->
+                <div id="direct-matched-contact" class="matched-contact-card hidden">
+                  <div id="direct-contact-avatar" class="avatar avatar-md">--</div>
+                  <div class="matched-contact-info">
+                    <h4 id="direct-contact-name" class="contact-name">User Name</h4>
+                    <span id="direct-contact-phone" class="contact-phone">+15551234567</span>
+                    <span class="registered-badge">✓ Registered User</span>
+                  </div>
+                </div>
+
+                <div class="modal-action-row">
+                  <button type="button" id="btn-start-direct-chat" class="btn btn-primary" disabled>
+                    <span class="btn-text">Start Chat</span>
+                    <span class="spinner hidden"></span>
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Tab 2: Create Group Panel -->
+            <div id="panel-group" class="tab-panel hidden" role="tabpanel" aria-labelledby="tab-group">
+              <div id="group-error" class="error-banner hidden"></div>
+
+              <form id="form-create-group" onsubmit="return false;">
+                <div class="form-group">
+                  <label for="group-name-input">Group Subject / Name</label>
+                  <input
+                    type="text"
+                    id="group-name-input"
+                    class="input-field"
+                    placeholder="Enter group name (e.g. Project Orion)"
+                    maxlength="60"
+                    required
+                  />
+                  <span class="field-hint">Required • 6–60 characters</span>
+                </div>
+
+                <!-- Selected Members Section -->
+                <div class="group-members-section">
+                  <div class="section-label-row">
+                    <span class="section-label">Selected Members</span>
+                    <span id="group-members-count" class="members-count-badge">0 added</span>
+                  </div>
+                  <div id="group-members-chips" class="members-chips-container">
+                    <span class="no-members-hint">No members added yet. Add at least 1 contact.</span>
+                  </div>
+                </div>
+
+                <!-- Select from Contacts -->
+                <div class="form-group" id="group-contacts-selection-group">
+                  <label>Select from Contacts</label>
+                  <div id="group-add-people-contacts" class="group-add-people-contacts-list"></div>
+                </div>
+
+                <div class="form-group">
+                  <label for="group-member-phone">Or Add by Phone Number</label>
+                  <div class="input-action-group">
+                    <input
+                      type="tel"
+                      id="group-member-phone"
+                      class="input-field"
+                      placeholder="Enter member phone number"
+                      autocomplete="off"
+                    />
+                    <button type="button" id="btn-add-group-member" class="btn btn-secondary btn-sm">
+                      <span class="btn-text">Add Member</span>
+                      <span class="spinner-inline-sm hidden"></span>
+                    </button>
+                  </div>
+                  <span class="field-hint">Contacts must be registered OllaChat users</span>
+                </div>
+
+                <div class="modal-action-row">
+                  <button type="button" id="btn-create-group" class="btn btn-primary" disabled>
+                    <span class="btn-text">Create Group</span>
+                    <span class="spinner hidden"></span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- Image Preview Lightbox Modal -->
+  <div id="image-preview-modal" class="image-preview-modal hidden" role="dialog" aria-modal="true" aria-label="Image Preview">
+    <div class="preview-backdrop" id="preview-backdrop"></div>
+    <div class="preview-dialog">
+      <header class="preview-modal-header">
+        <span id="preview-filename" class="preview-modal-title">Image</span>
+        <div class="preview-modal-actions">
+          <button type="button" id="btn-download-preview" class="btn-icon" title="Save / Download" aria-label="Download image"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+          <button type="button" id="btn-close-preview" class="btn-icon" title="Close" aria-label="Close preview"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+      </header>
+      <div class="preview-modal-body">
+        <img id="preview-img-element" class="preview-img-element" src="" alt="Preview" />
+      </div>
+      <div id="preview-caption" class="preview-modal-caption hidden"></div>
+    </div>
+  </div>
+
+  <!-- Message Context Menu Popover -->
+  <div id="message-context-menu" class="message-context-menu hidden" role="menu" aria-label="Message options">
+    <div class="context-menu-reactions" id="ctx-menu-reactions" role="toolbar" aria-label="Quick reactions">
+      <button type="button" class="ctx-reaction-btn" data-emoji="👍" title="Like">👍</button>
+      <button type="button" class="ctx-reaction-btn" data-emoji="❤️" title="Love">❤️</button>
+      <button type="button" class="ctx-reaction-btn" data-emoji="😂" title="Laugh">😂</button>
+      <button type="button" class="ctx-reaction-btn" data-emoji="😮" title="Surprised">😮</button>
+      <button type="button" class="ctx-reaction-btn" data-emoji="😢" title="Sad">😢</button>
+      <button type="button" class="ctx-reaction-btn" data-emoji="🙏" title="Thanks">🙏</button>
+    </div>
+    <button type="button" class="context-menu-item" data-action="reply" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></span>
+      <span class="context-item-text">Reply</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="copy" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg></span>
+      <span class="context-item-text">Copy</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="edit" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+      <span class="context-item-text">Edit</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="info" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span>
+      <span class="context-item-text">Message info</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="star" role="menuitem">
+      <span class="context-item-icon" id="ctx-star-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
+      <span class="context-item-text" id="ctx-star-text">Star</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="pin" role="menuitem">
+      <span class="context-item-icon" id="ctx-pin-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a1 1 0 0 0 0-2H8a1 1 0 0 0 0 2h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg></span>
+      <span class="context-item-text" id="ctx-pin-text">Pin</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="forward" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg></span>
+      <span class="context-item-text">Forward</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="select" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></svg></span>
+      <span class="context-item-text">Select</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item danger" data-action="delete-for-me" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></span>
+      <span class="context-item-text">Delete for me</span>
+    </button>
+    <button type="button" class="context-menu-item danger" data-action="delete-for-everyone" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
+      <span class="context-item-text">Delete for everyone</span>
+    </button>
+  </div>
+
+  <!-- Conversation Item Context Menu Popover -->
+  <div id="conversation-context-menu" class="conversation-context-menu hidden" role="menu" aria-label="Conversation options">
+    <button type="button" class="context-menu-item" data-action="pin" role="menuitem">
+      <span class="context-item-icon" id="ctx-chat-pin-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a1 1 0 0 0 0-2H8a1 1 0 0 0 0 2h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg></span>
+      <span class="context-item-text" id="ctx-chat-pin-text">Pin chat</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="favourite" role="menuitem">
+      <span class="context-item-icon" id="ctx-chat-fav-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
+      <span class="context-item-text" id="ctx-chat-fav-text">Add to favourites</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item" data-action="toggle-unread" role="menuitem">
+      <span class="context-item-icon" id="ctx-chat-unread-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
+      <span class="context-item-text" id="ctx-chat-unread-text">Mark as unread</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item" data-action="archive" role="menuitem">
+      <span class="context-item-icon" id="ctx-chat-archive-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect width="22" height="5" x="1" y="3"/><line x1="10" y1="12" x2="14" y2="12"/></svg></span>
+      <span class="context-item-text" id="ctx-chat-archive-text">Archive chat</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item" id="ctx-chat-mute-btn" data-action="toggle-mute" role="menuitem">
+      <span class="context-item-icon" id="ctx-chat-mute-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg></span>
+      <span class="context-item-text" id="ctx-chat-mute-text">Mute notifications</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item danger text-danger" id="ctx-chat-delete-btn" data-action="delete-chat" role="menuitem">
+      <span class="context-item-icon text-danger" id="ctx-chat-delete-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></span>
+      <span class="context-item-text text-danger" id="ctx-chat-delete-text">Delete chat</span>
+    </button>
+  </div>
+
+  <!-- Archived Item Context Menu Popover -->
+  <div id="archived-context-menu" class="conversation-context-menu hidden" role="menu" aria-label="Archived chat options">
+    <button type="button" class="context-menu-item" data-action="open" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></span>
+      <span class="context-item-text">Open chat</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="unarchive" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect width="22" height="5" x="1" y="3"/><line x1="10" y1="12" x2="14" y2="12"/></svg></span>
+      <span class="context-item-text">Unarchive chat</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item" data-action="toggle-unread" role="menuitem">
+      <span class="context-item-icon" id="ctx-archived-unread-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
+      <span class="context-item-text" id="ctx-archived-unread-text">Mark as unread</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item" data-action="pin" role="menuitem">
+      <span class="context-item-icon" id="ctx-archived-pin-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a1 1 0 0 0 0-2H8a1 1 0 0 0 0 2h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg></span>
+      <span class="context-item-text" id="ctx-archived-pin-text">Pin chat</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="favourite" role="menuitem">
+      <span class="context-item-icon" id="ctx-archived-fav-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
+      <span class="context-item-text" id="ctx-archived-fav-text">Add to favourites</span>
+    </button>
+  </div>
+
+  <!-- Custom List Pill Context Menu Popover -->
+  <div id="custom-list-context-menu" class="conversation-context-menu hidden" role="menu" aria-label="List options">
+    <button type="button" class="context-menu-item" data-action="edit-chats" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
+      <span class="context-item-text">Edit chats</span>
+    </button>
+    <button type="button" class="context-menu-item" data-action="rename-list" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="2" x2="22" y2="6"/><path d="M7.5 20.5 19 9l-4-4L3.5 16.5 2 22z"/></svg></span>
+      <span class="context-item-text">Rename list</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item context-menu-danger" data-action="delete-list" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></span>
+      <span class="context-item-text">Delete list</span>
+    </button>
+  </div>
+
+  <!-- Chat Header Three-Dot Options Menu Popover -->
+  <div id="chat-header-menu" class="conversation-context-menu hidden" role="menu" aria-label="Chat options">
+    <button type="button" class="context-menu-item" id="menu-item-contact-info" data-action="contact-info" role="menuitem">
+      <span class="context-item-icon" id="menu-contact-info-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span>
+      <span class="context-item-text" id="menu-contact-info-text">Contact info</span>
+    </button>
+    <button type="button" class="context-menu-item" id="menu-item-chat-search" data-action="chat-search" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+      <span class="context-item-text">Search</span>
+    </button>
+    <button type="button" class="context-menu-item" id="menu-item-chat-theme" data-action="chat-theme" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13 0-.92.75-1.67 1.67-1.67h2c3.05 0 5.56-2.5 5.56-5.55C22 6.01 17.46 2 12 2z"/><circle cx="7.5" cy="11.5" r="1.2" fill="currentColor"/><circle cx="10" cy="7.5" r="1.2" fill="currentColor"/><circle cx="14" cy="7.5" r="1.2" fill="currentColor"/><circle cx="16.5" cy="11.5" r="1.2" fill="currentColor"/></svg></span>
+      <span class="context-item-text">Chat theme</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item" id="menu-item-toggle-favourite" data-action="toggle-favourite" role="menuitem">
+      <span class="context-item-icon" id="menu-fav-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
+      <span class="context-item-text" id="menu-fav-text">Add to favourites</span>
+    </button>
+    <button type="button" class="context-menu-item" id="menu-item-change-list" data-action="change-list" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span>
+      <span class="context-item-text">Change list</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item" id="menu-item-toggle-archive" data-action="toggle-archive" role="menuitem">
+      <span class="context-item-icon" id="menu-archive-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="21 8 21 21 3 21 3 8"/><rect width="22" height="5" x="1" y="3"/><line x1="10" y1="12" x2="14" y2="12"/></svg></span>
+      <span class="context-item-text" id="menu-archive-text">Archive chat</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item" id="menu-item-toggle-mute" data-action="toggle-mute" role="menuitem">
+      <span class="context-item-icon" id="menu-mute-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg></span>
+      <span class="context-item-text" id="menu-mute-text">Mute notifications</span>
+    </button>
+    <div class="context-menu-separator"></div>
+    <button type="button" class="context-menu-item" id="menu-item-clear-chat" data-action="clear-chat" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
+      <span class="context-item-text">Clear chat</span>
+    </button>
+    <button type="button" class="context-menu-item text-danger hidden" id="menu-item-block-contact" data-action="block-contact" role="menuitem">
+      <span class="context-item-icon text-danger" id="menu-block-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
+      <span class="context-item-text text-danger" id="menu-block-text">Block</span>
+    </button>
+    <button type="button" class="context-menu-item text-danger hidden" id="menu-item-exit-group" data-action="exit-group" role="menuitem">
+      <span class="context-item-icon text-danger"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
+      <span class="context-item-text text-danger">Exit group</span>
+    </button>
+    <button type="button" class="context-menu-item text-danger hidden" id="menu-item-delete-chat" data-action="delete-chat" role="menuitem">
+      <span class="context-item-icon text-danger"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></span>
+      <span class="context-item-text text-danger">Delete chat</span>
+    </button>
+  </div>
+
+  <!-- Group Participant Action Popover Menu -->
+  <div id="participant-action-menu" class="conversation-context-menu hidden" role="menu" aria-label="Participant options">
+    <button type="button" class="context-menu-item" id="part-menu-view-contact" data-action="view-contact" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+      <span class="context-item-text">View contact</span>
+    </button>
+    <button type="button" class="context-menu-item hidden" id="part-menu-make-admin" data-action="make-admin" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
+      <span class="context-item-text" id="part-menu-make-admin-text">Promote to Owner</span>
+    </button>
+    <button type="button" class="context-menu-item hidden" id="part-menu-dismiss-admin" data-action="dismiss-admin" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
+      <span class="context-item-text" id="part-menu-dismiss-admin-text">Demote to Member</span>
+    </button>
+    <div class="context-menu-separator hidden" id="part-menu-separator"></div>
+    <button type="button" class="context-menu-item text-danger hidden" id="part-menu-remove" data-action="remove-member" role="menuitem">
+      <span class="context-item-icon text-danger"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+      <span class="context-item-text text-danger" id="part-menu-remove-text">Remove from group</span>
+    </button>
+  </div>
+
+  <!-- Add People to Group Modal Dialog -->
+  <div id="group-add-people-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="group-add-people-title">
+    <div class="modal-card modal-card-md">
+      <div class="modal-header">
+        <h3 id="group-add-people-title">Add people to group</h3>
+        <button type="button" id="btn-close-group-add-people" class="btn-icon modal-close-btn" title="Close" aria-label="Close add people dialog"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body group-add-people-body">
+        <div id="group-add-people-error" class="error-banner hidden"></div>
+        <div class="form-group">
+          <label for="group-add-people-input">Contact Phone Number</label>
+          <div class="input-action-group">
+            <input
+              type="tel"
+              id="group-add-people-input"
+              class="input-field"
+              placeholder="+15551234567 or international format"
+              autocomplete="off"
+            />
+            <button type="button" id="btn-lookup-group-add-people" class="btn btn-secondary btn-sm">
+              <span class="btn-text">Lookup</span>
+              <span class="spinner-inline-sm hidden"></span>
+            </button>
+          </div>
+          <span class="field-hint">Search for a registered user to add to this group</span>
+        </div>
+
+        <!-- Matched Contact Card -->
+        <div id="group-add-people-matched" class="matched-contact-card hidden">
+          <div id="group-add-people-avatar" class="avatar avatar-md">--</div>
+          <div class="matched-contact-info">
+            <h4 id="group-add-people-name" class="contact-name">User Name</h4>
+            <span id="group-add-people-phone" class="contact-phone">+15551234567</span>
+            <span class="registered-badge">✓ Registered User</span>
+          </div>
+          <button type="button" id="btn-select-matched-contact" class="btn btn-secondary btn-xs">Select</button>
+        </div>
+
+        <!-- Or Select from Existing Direct Contacts -->
+        <div class="section-label-row" style="margin-top: 14px;">
+          <span class="section-label">Existing Contacts</span>
+        </div>
+        <div id="group-add-people-contacts-list" class="group-add-people-contacts-list">
+          <!-- Populated from shellState direct conversations -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-group-add-people" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="btn-confirm-group-add-people" class="btn btn-primary btn-sm" disabled>
+          <span class="btn-text">Add to group</span>
+          <span class="spinner hidden"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Change Lists for Chat Modal Dialog -->
+  <div id="change-chat-lists-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="change-chat-lists-title">
+    <div class="modal-card modal-card-sm change-chat-lists-card">
+      <div class="modal-header">
+        <h3 id="change-chat-lists-title">Add to list</h3>
+        <button type="button" id="btn-close-change-chat-lists" class="btn-icon modal-close-btn" title="Close" aria-label="Close dialog">
+          <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body change-chat-lists-body">
+        <p class="change-chat-lists-desc" id="change-chat-lists-desc">Select which custom lists include this conversation.</p>
+        <div id="change-chat-lists-items" class="change-chat-lists-items">
+          <!-- Populated by app.js -->
+        </div>
+      </div>
+      <div class="modal-footer change-chat-lists-footer">
+        <button type="button" id="btn-create-list-from-change-modal" class="btn btn-secondary btn-sm">+ New list</button>
+        <button type="button" id="btn-done-change-chat-lists" class="btn btn-primary btn-sm">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create / Edit Custom Chat List Modal Dialog -->
+  <div id="custom-list-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="custom-list-modal-title">
+    <div class="modal-card modal-card-md custom-list-card">
+      <div class="modal-header">
+        <h3 id="custom-list-modal-title">Create new list</h3>
+        <button type="button" id="btn-close-custom-list-modal" class="btn-icon modal-close-btn" title="Close" aria-label="Close dialog">
+          <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body custom-list-modal-body">
+        <div id="custom-list-error" class="error-banner hidden"></div>
+        <div class="form-group">
+          <label for="custom-list-name-input">List name</label>
+          <input
+            type="text"
+            id="custom-list-name-input"
+            class="input-field"
+            placeholder="e.g. Work, College, Family"
+            maxlength="50"
+            autocomplete="off"
+            required
+          />
+        </div>
+        <div class="form-group custom-list-select-group">
+          <label class="custom-list-select-label">Select chats</label>
+          <div id="custom-list-chat-items" class="custom-list-chat-items" role="group" aria-label="Select chats for this list">
+            <!-- Dynamically rendered conversations with checkboxes -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-custom-list" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="btn-save-custom-list" class="btn btn-primary btn-sm">Create list</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Custom List Confirmation Modal Dialog -->
+  <div id="custom-list-delete-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="custom-list-delete-title">
+    <div class="modal-card modal-card-sm">
+      <div class="modal-header">
+        <h3 id="custom-list-delete-title">Delete this list?</h3>
+        <button type="button" id="btn-close-delete-custom-list" class="btn-icon modal-close-btn" title="Cancel" aria-label="Cancel">
+          <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p id="custom-list-delete-message">Are you sure you want to delete this list? Conversations will not be deleted.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-cancel-delete-custom-list" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="btn-confirm-delete-custom-list" class="btn btn-danger-sm">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Message Info Modal Dialog -->
+  <div id="message-info-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="message-info-title">
+    <div class="modal-card message-info-card">
+      <div class="modal-header">
+        <h3 id="message-info-title">Message info</h3>
+        <button type="button" id="btn-close-message-info" class="btn-icon modal-close-btn" title="Close" aria-label="Close message info"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body message-info-body">
+        <div id="info-message-preview-container" class="info-preview-container"></div>
+        <div id="info-1to1-sections" class="info-status-sections">
+          <div id="info-read-row" class="info-status-row">
+            <div class="info-status-left">
+              <span class="info-status-icon read-tick">✓✓</span>
+              <div class="info-status-details">
+                <span class="info-status-label">Read</span>
+                <span id="info-read-time" class="info-status-time">-</span>
+              </div>
+            </div>
+          </div>
+          <div id="info-delivered-row" class="info-status-row">
+            <div class="info-status-left">
+              <span class="info-status-icon delivered-tick">✓✓</span>
+              <div class="info-status-details">
+                <span class="info-status-label">Delivered</span>
+                <span id="info-delivered-time" class="info-status-time">-</span>
+              </div>
+            </div>
+          </div>
+          <div class="info-status-row">
+            <div class="info-status-left">
+              <span class="info-status-icon sent-icon">✓</span>
+              <div class="info-status-details">
+                <span class="info-status-label">Sent</span>
+                <span id="info-sent-time" class="info-status-time">-</span>
+              </div>
+            </div>
+          </div>
+          <div id="info-edited-row" class="info-status-row hidden">
+            <div class="info-status-left">
+              <span class="info-status-icon edit-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+              <div class="info-status-details">
+                <span class="info-status-label">Edited</span>
+                <span id="info-edited-time" class="info-status-time">-</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Group Member Status Sections -->
+        <div id="info-group-sections" class="info-group-sections hidden">
+          <div class="info-group-sent-bar">
+            <span class="info-status-icon sent-icon">✓</span>
+            <div class="info-group-sent-details">
+              <span class="info-group-sent-label">Sent</span>
+              <span id="info-group-sent-time" class="info-group-sent-time">-</span>
+            </div>
+          </div>
+
+          <div id="info-group-read-section" class="info-group-section">
+            <div class="info-group-section-header">
+              <div class="info-group-section-title-wrap">
+                <span class="info-status-icon read-tick">✓✓</span>
+                <span id="info-group-read-title" class="info-group-section-title">Read by (0)</span>
+              </div>
+            </div>
+            <div id="info-group-read-list" class="info-group-member-list"></div>
+          </div>
+
+          <div id="info-group-delivered-section" class="info-group-section">
+            <div class="info-group-section-header">
+              <div class="info-group-section-title-wrap">
+                <span class="info-status-icon delivered-tick">✓✓</span>
+                <span id="info-group-delivered-title" class="info-group-section-title">Delivered to (0)</span>
+              </div>
+            </div>
+            <div id="info-group-delivered-list" class="info-group-member-list"></div>
+          </div>
+
+          <div id="info-group-pending-section" class="info-group-section">
+            <div class="info-group-section-header">
+              <div class="info-group-section-title-wrap">
+                <span class="info-status-icon pending-tick">○</span>
+                <span id="info-group-pending-title" class="info-group-section-title">Pending (0)</span>
+              </div>
+            </div>
+            <div id="info-group-pending-list" class="info-group-member-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Group Info & Settings Modal Dialog -->
+  <div id="group-info-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="group-info-title">
+    <div class="modal-card modal-card-lg group-info-card">
+      <div class="modal-header">
+        <h3 id="group-info-title">Group info</h3>
+        <button type="button" id="btn-close-group-info" class="btn-icon modal-close-btn" title="Close" aria-label="Close group info"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body group-info-body">
+        <div id="group-info-error" class="error-banner hidden"></div>
+        <div id="group-info-success" class="success-banner hidden"></div>
+
+        <!-- Group Profile Header Section -->
+        <div class="group-info-hero">
+          <div id="group-info-avatar" class="avatar avatar-xl">--</div>
+          <div class="group-info-hero-meta">
+            <div class="group-info-name-row">
+              <h2 id="group-info-name" class="group-info-name">Group Name</h2>
+              <button type="button" id="btn-start-edit-group-name" class="btn-icon btn-sm hidden" title="Edit group name" aria-label="Edit group name"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>
+            </div>
+            <div id="group-info-rename-form" class="group-rename-box hidden">
+              <input type="text" id="group-rename-input" class="input-field" maxlength="60" placeholder="Group name (6–60 characters)" />
+              <div class="group-rename-actions">
+                <button type="button" id="btn-save-group-name" class="btn btn-primary btn-sm">Save</button>
+                <button type="button" id="btn-cancel-group-name" class="btn btn-secondary btn-sm">Cancel</button>
+              </div>
+            </div>
+            <div class="group-info-subrow">
+              <span id="group-info-member-count" class="group-info-subtitle">0 members</span>
+              <span id="group-info-user-role-badge" class="badge-role">Member</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add Members Section (Admin only) -->
+        <div id="group-add-member-section" class="group-info-section hidden">
+          <div class="section-label-row">
+            <span class="section-label">Add Member</span>
+          </div>
+          <div class="input-action-group">
+            <input
+              type="tel"
+              id="group-add-member-phone"
+              class="input-field"
+              placeholder="Enter member phone number"
+              autocomplete="off"
+            />
+            <button type="button" id="btn-submit-add-member" class="btn btn-secondary btn-sm">
+              <span class="btn-text">Add</span>
+              <span class="spinner-inline-sm hidden"></span>
+            </button>
+          </div>
+          <div id="group-add-member-status" class="field-hint">Add registered OllaChat users by phone</div>
+        </div>
+
+        <!-- Members List Section -->
+        <div class="group-info-section">
+          <div class="section-label-row">
+            <span class="section-label">Members</span>
+            <span id="group-members-list-count" class="members-count-badge">0</span>
+          </div>
+          <div id="group-members-loading" class="messages-state-view hidden">
+            <span class="spinner spinner-sm"></span>
+            <span class="state-label">Loading members...</span>
+          </div>
+          <div id="group-members-list" class="group-members-list">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-close-group-info-footer" class="btn btn-secondary btn-sm">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clear Chat Options Dialog -->
+  <div id="clear-chat-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="clear-chat-modal-title">
+    <div class="modal-card modal-card-sm clear-chat-card">
+      <div class="modal-header">
+        <h3 id="clear-chat-modal-title">Clear chat</h3>
+        <button type="button" id="btn-close-clear-chat" class="btn-icon modal-close-btn" title="Cancel" aria-label="Cancel"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body clear-chat-modal-body">
+        <p class="clear-chat-subtitle" id="clear-chat-subtitle">Choose what you want to remove from this device.</p>
+        <div class="clear-chat-options" role="radiogroup" aria-labelledby="clear-chat-subtitle">
+          <label class="clear-chat-option-label" for="clear-chat-option-messages-only">
+            <input type="radio" id="clear-chat-option-messages-only" name="clearChatOption" value="messages_only" checked />
+            <div class="clear-chat-option-text">
+              <span class="clear-chat-option-title">Delete chats only</span>
+              <span class="clear-chat-option-desc">Remove messages but keep downloaded media and documents.</span>
+            </div>
+          </label>
+          <label class="clear-chat-option-label" for="clear-chat-option-messages-and-media">
+            <input type="radio" id="clear-chat-option-messages-and-media" name="clearChatOption" value="messages_and_media" />
+            <div class="clear-chat-option-text">
+              <span class="clear-chat-option-title">Delete chats and media</span>
+              <span class="clear-chat-option-desc">Remove messages and locally cached media/documents from this conversation.</span>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-clear-chat-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="btn-clear-chat-proceed" class="btn btn-danger-sm">Clear chat</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Action Confirmation Dialog -->
+  <div id="group-confirm-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title">
+    <div class="modal-card modal-card-sm">
+      <div class="modal-header">
+        <h3 id="confirm-modal-title">Confirm Action</h3>
+        <button type="button" id="btn-close-confirm" class="btn-icon modal-close-btn" title="Cancel" aria-label="Cancel"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-modal-message">Are you sure?</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-confirm-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="btn-confirm-proceed" class="btn btn-danger-sm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Participants to Call Modal Dialog -->
+  <div id="call-add-participant-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="call-add-participant-title">
+    <div class="modal-card modal-card-md">
+      <div class="modal-header">
+        <h3 id="call-add-participant-title">Add people to call</h3>
+        <button type="button" id="btn-close-call-add-participant" class="btn-icon modal-close-btn" title="Close" aria-label="Close add people dialog"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body call-add-participant-body">
+        <div id="call-add-participant-error" class="error-banner hidden"></div>
+        <div class="search-box">
+          <span class="search-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+          <input
+            type="search"
+            id="call-participant-search"
+            class="search-input"
+            placeholder="Search participants"
+            aria-label="Search participants to invite"
+          />
+        </div>
+        <div id="call-participants-loading" class="messages-state-view hidden">
+          <span class="spinner spinner-sm"></span>
+          <span class="state-label">Loading participants...</span>
+        </div>
+        <div id="call-participants-empty" class="messages-state-view hidden">
+          <span class="state-label">No eligible participants found</span>
+        </div>
+        <div id="call-participants-list" class="call-participants-list" role="list">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="btn-close-call-add-participant-footer" class="btn btn-secondary btn-sm">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chat Theme Modal Dialog -->
+  <div id="chat-theme-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="chat-theme-title">
+    <div class="modal-card theme-modal-card">
+      <div class="theme-modal-header">
+        <div class="theme-modal-header-left">
+          <span class="theme-modal-header-icon"><svg class="ui-icon ui-icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13 0-.92.75-1.67 1.67-1.67h2c3.05 0 5.56-2.5 5.56-5.55C22 6.01 17.46 2 12 2z"/><circle cx="7.5" cy="11.5" r="1.2" fill="currentColor"/><circle cx="10" cy="7.5" r="1.2" fill="currentColor"/><circle cx="14" cy="7.5" r="1.2" fill="currentColor"/><circle cx="16.5" cy="11.5" r="1.2" fill="currentColor"/></svg></span>
+          <div>
+            <h3 id="chat-theme-title" class="theme-modal-title">Chat Theme</h3>
+            <div id="chat-theme-subtitle" class="theme-modal-subtitle">Customize colors, bubbles, and wallpaper</div>
+          </div>
+        </div>
+        <button type="button" id="btn-close-theme" class="btn-icon modal-close-btn" title="Close" aria-label="Close chat theme modal"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+
+      <div class="theme-modal-body">
+        <!-- Section 1: Preset Themes Gallery -->
+        <div class="theme-section">
+          <div class="theme-section-header">
+            <h4 class="theme-section-title">Color Themes</h4>
+            <span class="theme-section-hint">Select a preset palette</span>
+          </div>
+          <div id="theme-presets-scroll" class="theme-presets-scroll" role="radiogroup" aria-label="Preset themes">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- Section 2: Message Bubble Styles -->
+        <div class="theme-section">
+          <div class="theme-section-header">
+            <h4 class="theme-section-title">Message Bubbles</h4>
+            <span class="theme-section-hint">Bubble corner radius and padding</span>
+          </div>
+          <div id="bubble-styles-gallery" class="bubble-styles-gallery" role="radiogroup" aria-label="Bubble styles">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- Section 3: Wallpaper Gallery -->
+        <div class="theme-section">
+          <div class="theme-section-header">
+            <h4 class="theme-section-title">Wallpaper</h4>
+            <span class="theme-section-hint">Background pattern or gradient</span>
+          </div>
+          <div id="wallpaper-grid" class="wallpaper-grid" role="radiogroup" aria-label="Preset wallpapers">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- Section 4: Custom Wallpaper Upload -->
+        <div class="theme-section">
+          <div class="theme-section-header">
+            <h4 class="theme-section-title">Custom Wallpaper</h4>
+            <span class="theme-section-hint">Upload your own photo (PNG, JPG, WebP)</span>
+          </div>
+          <div class="custom-wallpaper-box">
+            <img id="custom-wallpaper-thumb" class="custom-wallpaper-preview-thumb hidden" alt="Custom wallpaper preview" />
+            <div class="custom-wallpaper-info">
+              <div id="custom-wallpaper-status" class="custom-wallpaper-filename">No custom wallpaper chosen</div>
+              <div class="custom-wallpaper-hint">High resolution landscape or portrait images recommended</div>
+            </div>
+            <div class="custom-wallpaper-actions">
+              <button type="button" id="btn-upload-custom-wallpaper" class="btn btn-secondary btn-sm">
+                <span>Choose Image</span>
+              </button>
+              <button type="button" id="btn-remove-custom-wallpaper" class="btn btn-action-pill danger hidden" title="Remove custom wallpaper">
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 5: Live Interactive Preview Card -->
+        <div class="theme-section theme-preview-section">
+          <div class="theme-section-divider" role="separator" aria-hidden="true"></div>
+          <div class="theme-section-header">
+            <h4 class="theme-section-title">Live Preview</h4>
+            <span id="theme-preview-status-name" class="theme-preview-status-name">Default</span>
+          </div>
+          <div class="theme-preview-container">
+            <div class="theme-preview-chat-header">
+              <div class="theme-preview-chat-header-left">
+                <div id="theme-preview-avatar" class="theme-preview-avatar">M</div>
+                <div class="theme-preview-chat-info">
+                  <div id="theme-preview-chat-title" class="theme-preview-contact-name">Malavika</div>
+                  <div class="theme-preview-status-sub">online</div>
+                </div>
+              </div>
+              <div class="theme-preview-chat-header-actions">
+                <span class="theme-preview-menu-dots" aria-hidden="true">⋮</span>
+              </div>
+            </div>
+            <div id="theme-preview-screen" class="theme-preview-screen" aria-label="Theme live preview">
+              <div class="theme-preview-day-divider">Today</div>
+              <div id="theme-preview-incoming" class="theme-preview-bubble incoming">
+                <span class="theme-preview-bubble-text">Hello! This is a preview</span>
+                <span class="theme-preview-bubble-meta">
+                  <span class="theme-preview-time">12:23</span>
+                </span>
+              </div>
+              <div id="theme-preview-outgoing" class="theme-preview-bubble outgoing">
+                <span class="theme-preview-bubble-text">Looks great 😊</span>
+                <span class="theme-preview-bubble-meta">
+                  <span class="theme-preview-time">12:24</span>
+                  <span class="theme-preview-status-icon status-read" title="Read">✓✓</span>
+                </span>
+              </div>
+              <div id="theme-preview-media" class="theme-preview-bubble outgoing theme-preview-media-bubble">
+                <div class="theme-preview-media-thumb" aria-hidden="true">
+                  <span class="theme-preview-media-camera-icon">📷</span>
+                  <span class="theme-preview-media-tag">Photo preview</span>
+                </div>
+                <span class="theme-preview-bubble-meta">
+                  <span class="theme-preview-time">12:25</span>
+                  <span class="theme-preview-status-icon status-read" title="Read">✓✓</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="theme-modal-footer">
+        <button type="button" id="btn-reset-theme" class="btn btn-secondary btn-sm" title="Remove custom theme and follow app appearance">
+          Use app theme
+        </button>
+        <div class="theme-modal-footer-right">
+          <button type="button" id="btn-cancel-theme" class="btn btn-secondary btn-sm">
+            Cancel
+          </button>
+          <button type="button" id="btn-save-theme" class="btn btn-primary btn-sm">
+            Save &amp; Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pin Duration Modal Dialog (Local Message Pinning) -->
+  <div id="pin-duration-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="pin-duration-title">
+    <div class="modal-card modal-card-sm pin-duration-card">
+      <div class="modal-header">
+        <h3 id="pin-duration-title">Pin message</h3>
+        <button type="button" id="btn-close-pin-duration" class="btn-icon modal-close-btn" title="Close" aria-label="Close dialog">
+          <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body pin-duration-body">
+        <p class="pin-duration-desc">How long should this message remain pinned?</p>
+        <div class="pin-duration-options" role="radiogroup" aria-label="Pin duration">
+          <label class="pin-duration-option">
+            <input type="radio" name="pin-duration-choice" value="24h" checked />
+            <span class="pin-duration-label-text">24 hours</span>
+          </label>
+          <label class="pin-duration-option">
+            <input type="radio" name="pin-duration-choice" value="7d" />
+            <span class="pin-duration-label-text">7 days</span>
+          </label>
+          <label class="pin-duration-option">
+            <input type="radio" name="pin-duration-choice" value="30d" />
+            <span class="pin-duration-label-text">30 days</span>
+          </label>
+          <label class="pin-duration-option">
+            <input type="radio" name="pin-duration-choice" value="90d" />
+            <span class="pin-duration-label-text">90 days</span>
+          </label>
+        </div>
+        <div id="pin-duration-expiry" class="pin-duration-expiry">Expires: October 1, 2026 at 6:20 PM</div>
+        <div class="pin-modal-disclosure">Pins are saved on this device.</div>
+      </div>
+      <div class="modal-footer pin-duration-footer">
+        <button type="button" id="btn-cancel-pin-duration" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="btn-confirm-pin-duration" class="btn btn-primary btn-sm">Pin</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Maximum Pinned Messages Limit Modal Dialog -->
+  <div id="pin-limit-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="pin-limit-title">
+    <div class="modal-card modal-card-sm pin-limit-card">
+      <div class="modal-header">
+        <h3 id="pin-limit-title">Maximum pinned messages reached</h3>
+        <button type="button" id="btn-close-pin-limit" class="btn-icon modal-close-btn" title="Close" aria-label="Close dialog">
+          <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body pin-limit-body">
+        <p class="pin-limit-desc">You can have up to 3 pinned messages in this chat.</p>
+        <p class="pin-limit-subdesc">Unpin an existing message before pinning another.</p>
+      </div>
+      <div class="modal-footer pin-limit-footer">
+        <button type="button" id="btn-cancel-pin-limit" class="btn btn-secondary btn-sm">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Forward Message Destination Picker Modal -->
+  <div id="forward-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="forward-modal-title">
+    <div class="modal-card modal-card-sm forward-modal-card">
+      <div class="modal-header">
+        <h3 id="forward-modal-title">Forward message to</h3>
+        <button type="button" id="btn-close-forward-modal" class="btn-icon modal-close-btn" title="Close" aria-label="Close dialog">
+          <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body forward-modal-body">
+        <div class="forward-search-wrapper">
+          <svg class="ui-icon ui-icon-xs forward-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="forward-chat-search" class="forward-search-input" placeholder="Search chats..." autocomplete="off" />
+        </div>
+        <div id="forward-chat-list" class="forward-chat-list" role="listbox" aria-multiselectable="true">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+      <div class="modal-footer forward-modal-footer">
+        <span id="forward-selection-count" class="forward-selection-count">0 chats selected</span>
+        <div class="forward-footer-actions">
+          <button type="button" id="btn-cancel-forward" class="btn btn-secondary btn-sm">Cancel</button>
+          <button type="button" id="btn-confirm-forward" class="btn btn-primary btn-sm" disabled>
+            <span class="btn-text">Forward</span>
+            <span class="spinner hidden" id="forward-spinner"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mute Notifications Modal Dialog -->
+  <div id="mute-duration-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="mute-duration-title">
+    <div class="modal-card modal-card-sm mute-duration-card">
+      <div class="modal-header">
+        <h3 id="mute-duration-title">Mute notifications</h3>
+        <button type="button" id="btn-close-mute-duration" class="btn-icon modal-close-btn" title="Close" aria-label="Close dialog">
+          <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body mute-duration-body">
+        <p class="mute-duration-desc" id="mute-duration-desc">Other participants will not see that you muted this chat. You will still receive messages, but notifications will be silenced.</p>
+        <div id="mute-modal-error" class="error-banner hidden" role="alert"></div>
+        <div class="mute-duration-options" role="radiogroup" aria-label="Mute duration">
+          <label class="mute-duration-option">
+            <input type="radio" name="mute-duration-choice" value="8h" checked />
+            <span class="mute-duration-label-text">8 hours</span>
+          </label>
+          <label class="mute-duration-option">
+            <input type="radio" name="mute-duration-choice" value="1w" />
+            <span class="mute-duration-label-text">1 week</span>
+          </label>
+          <label class="mute-duration-option">
+            <input type="radio" name="mute-duration-choice" value="always" />
+            <span class="mute-duration-label-text">Always</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer mute-duration-footer">
+        <button type="button" id="btn-cancel-mute-duration" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="btn-confirm-mute-duration" class="btn btn-primary btn-sm">
+          <span class="btn-text">Mute</span>
+          <span class="spinner-inline-sm hidden" id="mute-spinner"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Block Contact Confirmation Modal Dialog -->
+  <div id="block-contact-confirm-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="block-contact-title">
+    <div class="modal-card modal-card-sm block-confirm-card">
+      <div class="modal-header">
+        <h3 id="block-contact-title">Block contact?</h3>
+        <button type="button" id="btn-close-block-confirm" class="btn-icon modal-close-btn" title="Close" aria-label="Close dialog">
+          <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body block-confirm-body">
+        <p class="block-confirm-desc" id="block-confirm-desc">Blocked contacts will no longer be able to call you or send you messages.</p>
+        <div id="block-modal-error" class="error-banner hidden" role="alert"></div>
+      </div>
+      <div class="modal-footer block-confirm-footer">
+        <button type="button" id="btn-cancel-block-confirm" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="btn-confirm-block" class="btn btn-danger-sm">
+          <span class="btn-text">Block</span>
+          <span class="spinner-inline-sm hidden" id="block-spinner"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Blocked Contacts List Modal Dialog -->
+  <div id="blocked-contacts-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="blocked-contacts-title">
+    <div class="modal-card modal-card-md blocked-contacts-card">
+      <div class="modal-header">
+        <h3 id="blocked-contacts-title">Blocked Contacts</h3>
+        <button type="button" id="btn-close-blocked-contacts" class="btn-icon modal-close-btn" title="Close" aria-label="Close dialog">
+          <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body blocked-contacts-body">
+        <div id="blocked-contacts-error" class="error-banner hidden" role="alert"></div>
+        <div id="blocked-contacts-loading" class="contacts-loading hidden">
+          <span class="spinner-inline-sm"></span> Loading blocked contacts...
+        </div>
+        <div id="blocked-contacts-empty" class="blocked-empty-state hidden">
+          <p>No blocked contacts</p>
+        </div>
+        <div id="blocked-contacts-list" class="blocked-contacts-list" role="list">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+      <div class="modal-footer blocked-contacts-footer">
+        <button type="button" id="btn-done-blocked-contacts" class="btn btn-secondary btn-sm">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
