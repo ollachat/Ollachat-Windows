@@ -31,7 +31,7 @@ describe('Custom Chat Lists System Tests (35 Invariants)', () => {
   const appPath = path.join(projectRoot, 'src', 'renderer', 'app.js');
   const html = fs.readFileSync(indexPath, 'utf8');
   const css = fs.readFileSync(cssPath, 'utf8');
-  const appJs = fs.readFileSync(appPath, 'utf8');
+  const appJs = fs.readFileSync(appPath, 'utf8').replace(/\r\n/g, '\n');
 
   let state;
 

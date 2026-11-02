@@ -24,8 +24,8 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
   const indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
   const stylesCss = fs.readFileSync(stylesCssPath, 'utf8');
   const preloadJs = fs.readFileSync(preloadJsPath, 'utf8');
-  const mainJs = fs.readFileSync(mainJsPath, 'utf8');
-  const appJs = fs.readFileSync(appJsPath, 'utf8');
+  const mainJs = fs.readFileSync(mainJsPath, 'utf8').replace(/\r\n/g, '\n');
+  const appJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
 
   // =========================================================================
   // 1. MARKUP & UI ELEMENTS

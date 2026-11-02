@@ -160,7 +160,7 @@ describe('PDF and File Attachment Open/View vs Download Suite', () => {
   // ═════════════════════════════════════════════════════════════════
   describe('Renderer Event Separation & User Experience', () => {
     test('6 & 7. Card click triggers handleOpenFile, download button triggers handleDownloadFile with stopPropagation', () => {
-      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
+      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8').replace(/\r\n/g, '\n');
 
       // Card click event triggers onFileOpen (which calls handleOpenFile)
       assert.ok(appCode.includes('card.addEventListener(\'click\', onFileOpen);'), 'Clicking card must invoke onFileOpen');
@@ -175,7 +175,7 @@ describe('PDF and File Attachment Open/View vs Download Suite', () => {
     });
 
     test('handleOpenFile invokes media.openAttachment and does NOT call saveMediaFile (no Save As dialog)', () => {
-      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
+      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8').replace(/\r\n/g, '\n');
 
       // Extract handleOpenFile function implementation
       const fnMatch = appCode.match(/async function handleOpenFile\([\s\S]*?\n\}/);
@@ -187,7 +187,7 @@ describe('PDF and File Attachment Open/View vs Download Suite', () => {
     });
 
     test('8 & 9. Download failure and open failure are handled with informative user alerts', () => {
-      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
+      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8').replace(/\r\n/g, '\n');
       const fnMatch = appCode.match(/async function handleOpenFile\([\s\S]*?\n\}/);
       assert.ok(fnMatch);
       const fnBody = fnMatch[0];
@@ -198,22 +198,22 @@ describe('PDF and File Attachment Open/View vs Download Suite', () => {
     });
 
     test('10. Existing image opening still works via lightbox preview', () => {
-      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
+      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8').replace(/\r\n/g, '\n');
       assert.ok(appCode.includes('openImagePreview(resolvedUrl, resolved.filename, resolved.caption);'), 'Images must open in lightbox preview');
     });
 
     test('11. Existing video opening still works with video controls', () => {
-      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
+      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8').replace(/\r\n/g, '\n');
       assert.ok(appCode.includes("video.controls = true;"), 'Videos must have controls');
     });
 
     test('12. Existing audio/voice-note playback still works via voice note player', () => {
-      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
+      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8').replace(/\r\n/g, '\n');
       assert.ok(appCode.includes('createVoiceNotePlayerElement('), 'Voice note player must remain active');
     });
 
     test('13. Card visual styling includes title and opening-file state', () => {
-      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8');
+      const appCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'app.js'), 'utf8').replace(/\r\n/g, '\n');
       assert.ok(appCode.includes("card.title = `Click to open ${resolved.filename}`;"), 'Card must have tooltip indicating click to open');
 
       const cssCode = fs.readFileSync(path.join(projectRoot, 'src', 'renderer', 'styles.css'), 'utf8');

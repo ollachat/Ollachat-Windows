@@ -27,7 +27,7 @@ const preloadJsPath = path.join(__dirname, '..', 'src', 'preload', 'preload.js')
 const mainJsPath = path.join(__dirname, '..', 'src', 'main', 'main.js');
 
 const html = fs.readFileSync(htmlPath, 'utf8');
-const appJs = fs.readFileSync(appJsPath, 'utf8');
+const appJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
 const preloadJs = fs.readFileSync(preloadJsPath, 'utf8');
 const mainJs = fs.readFileSync(mainJsPath, 'utf8');
 

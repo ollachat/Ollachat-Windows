@@ -20,7 +20,7 @@ const shellStateJsPath = path.join(__dirname, '..', 'src', 'renderer', 'chat-she
 
 const html = fs.readFileSync(htmlPath, 'utf8');
 const css = fs.readFileSync(cssPath, 'utf8');
-const appJs = fs.readFileSync(appJsPath, 'utf8');
+const appJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
 const shellStateJs = fs.readFileSync(shellStateJsPath, 'utf8');
 
 describe('WhatsApp-Style Group Info & Contact Info Action System (42 Invariants)', () => {

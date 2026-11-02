@@ -13,7 +13,7 @@ const appJsPath = path.resolve(__dirname, '../src/renderer/app.js');
 const indexHtmlPath = path.resolve(__dirname, '../src/renderer/index.html');
 const stylesCssPath = path.resolve(__dirname, '../src/renderer/styles.css');
 
-const appJs = fs.readFileSync(appJsPath, 'utf8');
+const appJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
 const indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
 const stylesCss = fs.readFileSync(stylesCssPath, 'utf8');
 

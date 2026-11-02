@@ -15,7 +15,7 @@ const shellStatePath = path.join(__dirname, '..', 'src', 'renderer', 'chat-shell
 
 const html = fs.readFileSync(htmlPath, 'utf8');
 const css = fs.readFileSync(cssPath, 'utf8');
-const appJs = fs.readFileSync(appJsPath, 'utf8');
+const appJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
 const shellStateJs = fs.readFileSync(shellStatePath, 'utf8');
 
 describe('Chat Header Three-Dot Options Menu (Section 30 - 35 Tests)', () => {

@@ -12,7 +12,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const appJsPath = path.join(__dirname, '..', 'src', 'renderer', 'app.js');
-const appJs = fs.readFileSync(appJsPath, 'utf8');
+const appJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
 
 // Lightweight DOM mock for verifying rendering without browser
 function createMockElement(tagName = 'div', className = '', id = '') {
@@ -82,7 +82,7 @@ function createMockElement(tagName = 'div', className = '', id = '') {
 describe('Real-Time Incoming Message Rendering (P1 Verification)', () => {
 
   test('Static Invariant: handleRealtimeChatEvent scopes isCurrentlyViewed and isActiveRoom at top level', () => {
-    const freshAppJs = fs.readFileSync(appJsPath, 'utf8');
+    const freshAppJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
     assert.ok(freshAppJs.includes('const isSameRoom = (a, b) =>'), 'Must define case-insensitive isSameRoom helper');
     assert.ok(freshAppJs.includes('const isCurrentlyViewed = eventRoomId === shellState.selectedRoomId && isAppActiveAndFocused()'), 'Must hoist isCurrentlyViewed');
     assert.ok(freshAppJs.includes('const isActiveRoom = isSameRoom(eventRoomId, shellState?.selectedRoomId) || (eventRoomId === shellState?.selectedRoomId);'), 'Must hoist isActiveRoom');
@@ -274,7 +274,7 @@ describe('Real-Time Incoming Message Rendering (P1 Verification)', () => {
   });
 
   test('Test 8: appendMessageToDom queries all .day-divider elements to prevent redundant duplicate dividers', () => {
-    const freshAppJs = fs.readFileSync(appJsPath, 'utf8');
+    const freshAppJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
     assert.ok(
       freshAppJs.includes("const allDividers = messagesList.querySelectorAll('.day-divider');") &&
       freshAppJs.includes("const lastDivider = allDividers.length > 0 ? allDividers[allDividers.length - 1] : null;"),
@@ -283,7 +283,7 @@ describe('Real-Time Incoming Message Rendering (P1 Verification)', () => {
   });
 
   test('Test 9: Incoming message in open conversation preserves read state without showing unread badge', () => {
-    const freshAppJs = fs.readFileSync(appJsPath, 'utf8');
+    const freshAppJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
     assert.ok(
       freshAppJs.includes('else if (isActiveRoom || isCurrentlyViewed)') &&
       freshAppJs.includes('shellState.markConversationAsRead(eventRoomId)'),
@@ -292,7 +292,7 @@ describe('Real-Time Incoming Message Rendering (P1 Verification)', () => {
   });
 
   test('Test 10: wasNearBottom is decoupled from isOpeningUnread so active chat autoscrolls seamlessly', () => {
-    const freshAppJs = fs.readFileSync(appJsPath, 'utf8');
+    const freshAppJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
     assert.ok(
       !freshAppJs.includes('const wasNearBottom = (!isOpeningUnread && messagesScrollArea)'),
       'wasNearBottom must NOT be suppressed by isOpeningUnread'
@@ -304,7 +304,7 @@ describe('Real-Time Incoming Message Rendering (P1 Verification)', () => {
   });
 
   test('Test 11: Empty DOM recovery triggers renderMessages when room state contains messages', () => {
-    const freshAppJs = fs.readFileSync(appJsPath, 'utf8');
+    const freshAppJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
     assert.ok(
       freshAppJs.includes('if (domMessageRows.length === 0 && targetState.messages.length > 0) {\n          renderMessages();'),
       'Must recover and call renderMessages when messages exist in state but DOM is empty'
@@ -312,7 +312,7 @@ describe('Real-Time Incoming Message Rendering (P1 Verification)', () => {
   });
 
   test('Test 12: Sequence collision prevention ensures sequential incoming messages render distinct DOM elements', () => {
-    const freshAppJs = fs.readFileSync(appJsPath, 'utf8');
+    const freshAppJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
     assert.ok(
       freshAppJs.includes('if (typeof seq === \'number\' && Number.isFinite(seq) && seq > 0)'),
       'createMessageBubbleElement must only set data-seq for strictly positive numbers'
@@ -324,7 +324,7 @@ describe('Real-Time Incoming Message Rendering (P1 Verification)', () => {
   });
 
   test('Test 13: activeRoomMessagesState is aligned with targetState on active incoming message', () => {
-    const freshAppJs = fs.readFileSync(appJsPath, 'utf8');
+    const freshAppJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
     assert.ok(
       freshAppJs.includes('if (isActiveRoom && activeRoomMessagesState !== targetState) {\n    activeRoomMessagesState = targetState;\n  }'),
       'handleRealtimeChatEvent must align activeRoomMessagesState with targetState when room is active'
@@ -332,7 +332,7 @@ describe('Real-Time Incoming Message Rendering (P1 Verification)', () => {
   });
 
   test('Test 14: Fallback to renderMessages occurs if targeted appendMessageToDom cannot locate rendered element in DOM', () => {
-    const freshAppJs = fs.readFileSync(appJsPath, 'utf8');
+    const freshAppJs = fs.readFileSync(appJsPath, 'utf8').replace(/\r\n/g, '\n');
     assert.ok(
       freshAppJs.includes('const appendedToDom = appendMessageToDom(msg);') &&
       freshAppJs.includes('const messageRowInDom = findMessageDomElement(msg);') &&
