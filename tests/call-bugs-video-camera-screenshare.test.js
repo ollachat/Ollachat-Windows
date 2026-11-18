@@ -99,7 +99,7 @@ class MockRTCRtpSender {
     this.track = newTrack;
   }
 
-  async generateKeyFrame() {}
+  async generateKeyFrame() { }
 }
 
 class MockRTCPeerConnection {
@@ -109,6 +109,7 @@ class MockRTCPeerConnection {
     this.transceivers = [];
     this.localDescription = null;
     this.remoteDescription = null;
+    this.signalingState = 'stable';
     this.isClosed = false;
     this.ontrack = null;
     this.onicecandidate = null;
@@ -153,13 +154,17 @@ class MockRTCPeerConnection {
 
   async setLocalDescription(desc) {
     this.localDescription = desc;
+    if (desc.type === 'offer') this.signalingState = 'have-local-offer';
+    if (desc.type === 'answer') this.signalingState = 'stable';
   }
 
   async setRemoteDescription(desc) {
     this.remoteDescription = desc;
+    if (desc.type === 'offer') this.signalingState = 'have-remote-offer';
+    if (desc.type === 'answer') this.signalingState = 'stable';
   }
 
-  async addIceCandidate() {}
+  async addIceCandidate() { }
 
   close() {
     this.isClosed = true;
@@ -193,7 +198,7 @@ class MockRtcBridge {
     this.candidatesSent.push({ candidate, sdpMid, sdpMLineIndex });
   }
 
-  leave() {}
+  leave() { }
 }
 
 class MockVideoElement {
@@ -296,7 +301,7 @@ describe('Call Fixes: Video Identification, Camera Controls, Screen-Share Cleanu
       assert.deepStrictEqual(modeChangeEvent, { isVideo: true, mode: 'video' });
     });
 
-    test('3. Late incoming SDP offer with m=video corrects modality to video while ringing', async () => {
+    test('3. Late incoming SDP offer with m=video corrects modality while live remote media controls connection', async () => {
       const { manager } = createTestHarness();
       manager.handleIncomingCall({
         roomId: 'room-vid-3',
@@ -319,8 +324,25 @@ describe('Call Fixes: Video Identification, Camera Controls, Screen-Share Cleanu
       assert.strictEqual(manager.mode, 'video');
       assert.ok(manager._pendingOffer);
 
-      // On acceptance, callee acquires video and processes preserved offer
+      // Acceptance publishes the receiver's own media first and remains connecting.
       await manager.acceptCall();
+      assert.strictEqual(manager.state, CALL_STATE.CONNECTING);
+      assert.strictEqual(manager.peerConnection.signalingState, 'have-local-offer');
+
+      // The publication answer releases the queued SFU offer, but transport SDP alone still cannot connect.
+      await manager._handleIncomingAnswer(
+        'v=0\r\no=receiver-publication-answer\r\n',
+        manager.callEpoch
+      );
+      assert.strictEqual(manager.state, CALL_STATE.CONNECTING);
+      assert.strictEqual(manager.peerConnection.signalingState, 'stable');
+
+      const remoteAudioTrack = new MockTrack('audio');
+      manager.peerConnection.ontrack({
+        track: remoteAudioTrack,
+        streams: [new MockMediaStream([remoteAudioTrack])]
+      });
+
       assert.strictEqual(manager.state, CALL_STATE.CONNECTED);
       assert.strictEqual(manager.isVideo, true);
       assert.strictEqual(manager.mode, 'video');

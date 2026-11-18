@@ -275,6 +275,9 @@ export class DatabaseService {
     const isMarkedUnread = (conv.isMarkedUnread !== undefined || conv.is_marked_unread !== undefined)
       ? (conv.isMarkedUnread || conv.is_marked_unread ? 1 : 0)
       : (existing?.is_marked_unread ?? 0);
+    const isExited = (conv.isExited !== undefined || conv.is_exited !== undefined || conv.exited !== undefined)
+      ? (conv.isExited || conv.is_exited || conv.exited ? 1 : 0)
+      : (existing?.is_exited ?? 0);
     const draftText = typeof (conv.draftText ?? conv.draft_text) === 'string'
       ? (conv.draftText ?? conv.draft_text)
       : (existing?.draft_text ?? null);
@@ -290,8 +293,8 @@ export class DatabaseService {
         room_id, kind, room_name, peer_user_id, peer_phone, peer_display_name,
         last_message_id, last_message_preview, last_message_time, last_event_seq,
         unread_count, is_archived, is_pinned, pinned_order, is_favourite,
-        is_marked_unread, draft_text, muted_until, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        is_marked_unread, is_exited, draft_text, muted_until, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(room_id) DO UPDATE SET
         kind = excluded.kind,
         room_name = coalesce(excluded.room_name, conversations.room_name),
@@ -308,6 +311,7 @@ export class DatabaseService {
         pinned_order = excluded.pinned_order,
         is_favourite = excluded.is_favourite,
         is_marked_unread = excluded.is_marked_unread,
+        is_exited = coalesce(excluded.is_exited, conversations.is_exited),
         draft_text = excluded.draft_text,
         muted_until = excluded.muted_until,
         updated_at = excluded.updated_at;`,
@@ -315,11 +319,23 @@ export class DatabaseService {
         roomId, kind, roomName, peerUserId, peerPhone, peerDisplayName,
         lastMessageId, lastMessagePreview, lastMessageTime, lastEventSeq,
         unreadCount, isArchived, isPinned, pinnedOrder, isFavourite,
-        isMarkedUnread, draftText, mutedUntil, createdAt, updatedAt
+        isMarkedUnread, isExited, draftText, mutedUntil, createdAt, updatedAt
       ]
     );
 
     return { ok: true, roomId };
+  }
+
+  /**
+   * Deletes a conversation record and its associated data locally from SQLite.
+   * @param {string} roomId
+   * @returns {Promise<{ ok: boolean, roomId: string }>}
+   */
+  async deleteConversation(roomId) {
+    await this._getAuthorizedUser();
+    const validatedRoomId = validateIdentifier(roomId, 'roomId');
+    await this.databaseManager.run('DELETE FROM conversations WHERE room_id = ?;', [validatedRoomId]);
+    return { ok: true, roomId: validatedRoomId };
   }
 
   /**
@@ -677,7 +693,10 @@ export class DatabaseService {
             ELSE excluded.body_json
           END,
           is_deleted = max(excluded.is_deleted, messages.is_deleted),
-          is_starred = excluded.is_starred,
+          is_starred = CASE
+            WHEN max(excluded.is_deleted, messages.is_deleted) = 1 THEN 0
+            ELSE max(excluded.is_starred, messages.is_starred)
+          END,
           is_deleted_for_me = max(excluded.is_deleted_for_me, messages.is_deleted_for_me),
           edited_at = CASE
             WHEN max(excluded.is_deleted, messages.is_deleted) = 1 THEN coalesce(messages.edited_at, excluded.edited_at)
@@ -1112,7 +1131,7 @@ export class DatabaseService {
     const tombstone = JSON.stringify({ text: 'This message was deleted' });
 
     const res = await this.databaseManager.run(
-      'UPDATE messages SET is_deleted = 1, kind = "deleted", body_json = ? WHERE id = ? OR client_message_id = ?;',
+      'UPDATE messages SET is_deleted = 1, kind = "deleted", is_starred = 0, body_json = ? WHERE id = ? OR client_message_id = ?;',
       [tombstone, validId, validId]
     );
     return { ok: true, changes: res.changes };
@@ -1129,10 +1148,96 @@ export class DatabaseService {
     const id = typeof paramsOrId === 'string' ? paramsOrId : paramsOrId?.id;
     const validId = validateIdentifier(id, 'id');
     const res = await this.databaseManager.run(
-      'UPDATE messages SET is_deleted_for_me = 1 WHERE id = ? OR client_message_id = ?;',
+      'UPDATE messages SET is_deleted_for_me = 1, is_starred = 0 WHERE id = ? OR client_message_id = ?;',
       [validId, validId]
     );
     return { ok: true, changes: res.changes };
+  }
+
+  /**
+   * Updates the starred status of a message in SQLite.
+   * @param {object|string} paramsOrId
+   * @param {boolean} [maybeIsStarred]
+   * @returns {Promise<{ ok: boolean, changes: number }>}
+   */
+  async updateMessageStarred(paramsOrId, maybeIsStarred) {
+    await this._getAuthorizedUser();
+    let id;
+    let isStarred = true;
+    let roomId = null;
+
+    if (typeof paramsOrId === 'string') {
+      id = paramsOrId;
+      if (typeof maybeIsStarred === 'boolean') isStarred = maybeIsStarred;
+    } else if (paramsOrId && typeof paramsOrId === 'object') {
+      id = paramsOrId.messageId || paramsOrId.id || paramsOrId.clientMessageId || paramsOrId.client_message_id;
+      if (paramsOrId.isStarred !== undefined) {
+        isStarred = Boolean(paramsOrId.isStarred);
+      } else if (paramsOrId.is_starred !== undefined) {
+        isStarred = Boolean(paramsOrId.is_starred);
+      }
+      roomId = paramsOrId.roomId || paramsOrId.room_id || null;
+    }
+
+    const validId = validateIdentifier(id, 'id');
+    const starredVal = isStarred ? 1 : 0;
+
+    let sql = 'UPDATE messages SET is_starred = ? WHERE (id = ? OR client_message_id = ?)';
+    const params = [starredVal, validId, validId];
+    if (roomId) {
+      sql += ' AND room_id = ?';
+      params.push(validateIdentifier(roomId, 'roomId'));
+    }
+    sql += ';';
+
+    const res = await this.databaseManager.run(sql, params);
+    return { ok: true, changes: res.changes };
+  }
+
+  /**
+   * Retrieves starred messages from SQLite for a specific room or across all rooms.
+   * Excludes messages deleted for everyone or deleted for the current user.
+   * @param {object} [options={}]
+   * @returns {Promise<Array<object>>}
+   */
+  async getStarredMessages(options = {}) {
+    await this._getAuthorizedUser();
+    const roomId = (options.roomId || options.room_id)
+      ? validateIdentifier(String(options.roomId || options.room_id), 'roomId')
+      : null;
+    const limit = validateLimit(options.limit, 100, 500);
+
+    let sql = `
+      SELECT m.*
+      FROM messages m
+      WHERE m.is_starred = 1
+        AND m.is_deleted = 0
+        AND m.is_deleted_for_me = 0
+    `;
+    const params = [];
+    if (roomId) {
+      sql += ' AND m.room_id = ?';
+      params.push(roomId);
+    }
+
+    sql += ' ORDER BY m.created_at DESC LIMIT ?;';
+    params.push(limit);
+
+    const rows = await this.databaseManager.all(sql, params);
+    for (const r of rows) {
+      if (r) {
+        r.deliveryStatus = r.status;
+        r.delivery_status = r.status;
+        if (r.reactions && typeof r.reactions === 'string') {
+          try {
+            r.reactions = JSON.parse(r.reactions);
+          } catch {
+            r.reactions = null;
+          }
+        }
+      }
+    }
+    return rows;
   }
 
   /**
@@ -2372,10 +2477,13 @@ export class DatabaseService {
 
     ipcMain.handle('db:get-conversations', wrap((payload) => this.getConversations(payload)));
     ipcMain.handle('db:save-conversation', wrap((payload) => this.saveConversation(payload)));
+    ipcMain.handle('db:delete-conversation', wrap((payload) => this.deleteConversation(payload)));
     ipcMain.handle('db:get-messages', wrap((payload) => this.getMessages(payload)));
     ipcMain.handle('db:get-message-by-id', wrap((payload) => this.getMessageById(payload)));
     ipcMain.handle('db:save-message', wrap((payload) => this.saveMessage(payload)));
     ipcMain.handle('db:update-message-status', wrap((payload) => this.updateMessageStatus(payload)));
+    ipcMain.handle('db:update-message-starred', wrap((payload) => this.updateMessageStarred(payload)));
+    ipcMain.handle('db:get-starred-messages', wrap((payload) => this.getStarredMessages(payload)));
     ipcMain.handle('db:get-message-receipts', wrap((payload) => this.getMessageReceipts(payload)));
     ipcMain.handle('db:update-message-reaction', wrap((payload) => this.updateMessageReaction(payload)));
     ipcMain.handle('db:get-message-reactions', wrap((payload) => this.getMessageReactions(payload)));

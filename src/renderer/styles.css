@@ -1919,6 +1919,12 @@ html, body {
   user-select: none;
   position: relative;
   z-index: 1;
+  transition: opacity 0.3s ease-out;
+}
+
+.unread-messages-divider.fading-out {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .unread-messages-divider::before,
@@ -2033,6 +2039,39 @@ html, body {
 
 .message-row.outgoing {
   align-items: flex-end;
+}
+
+/* WhatsApp-Style Centered Group System Messages */
+.message-row.system-message-row {
+  align-items: center;
+  justify-content: center;
+  margin: 6px 0;
+  user-select: text;
+}
+
+.system-message-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(18, 27, 34, 0.88);
+  color: var(--text-secondary, #8696a0);
+  font-size: 0.77rem;
+  font-weight: 500;
+  line-height: 1.4;
+  padding: 5px 12px;
+  border-radius: 8px;
+  max-width: 85%;
+  text-align: center;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+  word-break: break-word;
+}
+
+[data-app-theme="light"] .system-message-pill,
+[data-theme="light"] .system-message-pill {
+  background-color: rgba(255, 255, 255, 0.92);
+  color: #54656f;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 2px rgba(11, 20, 26, 0.08);
 }
 
 /* Message Bubble */
@@ -7414,6 +7453,12 @@ html, body {
   gap: 8px;
 }
 
+.contact-info-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .contact-info-section-title {
   font-size: 0.8rem;
   font-weight: 600;
@@ -7428,6 +7473,34 @@ html, body {
   line-height: 1.45;
   margin: 0;
   word-break: break-word;
+}
+
+.contact-info-about-placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+  cursor: pointer;
+}
+
+.contact-info-about-placeholder:hover {
+  text-decoration: underline;
+}
+
+.contact-info-desc-textarea {
+  width: 100%;
+  min-height: 64px;
+  max-height: 180px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+
+.contact-info-desc-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
 }
 
 .contact-info-detail-row {
@@ -7687,6 +7760,12 @@ html, body {
   font-size: 14px;
   font-weight: 500;
   color: var(--text-primary);
+}
+.contact-info-nav-row-value {
+  font-size: 13px;
+  color: var(--text-secondary, var(--text-muted));
+  margin-left: auto;
+  margin-right: 8px;
 }
 .contact-info-nav-row-arrow {
   color: var(--text-secondary);
@@ -9038,6 +9117,24 @@ html, body {
   font-size: 13px;
   text-align: center;
   user-select: none;
+}
+
+.composer-exited-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 18px;
+  background: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  color: var(--text-muted, #94a3b8);
+  font-size: 13px;
+  text-align: center;
+  user-select: none;
+}
+
+.composer-exited-text {
+  max-width: 600px;
+  line-height: 1.4;
 }
 
 .mute-duration-card,

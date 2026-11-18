@@ -92,7 +92,7 @@ describe('WhatsApp-Style Group Info & Contact Info Action System (42 Invariants)
     assert.strictEqual(targetCaps.canDemote, false);
   });
 
-  // 8. Admin sees authorized controls
+  // 8. Admin sees authorized controls (metadata rename is Owner-only)
   test('8. Admin sees authorized controls', () => {
     const groupConv = { roomId: 'grp_1', kind: 'group', name: 'Dev Team' };
     const participants = [
@@ -102,12 +102,24 @@ describe('WhatsApp-Style Group Info & Contact Info Action System (42 Invariants)
     const caps = getGroupCapabilities(groupConv, participants, 'my_id');
     assert.strictEqual(caps.isCurrentUserAdmin, true);
     assert.strictEqual(caps.canAddPeople, true);
-    assert.strictEqual(caps.canRenameGroup, true);
+    assert.strictEqual(caps.canRenameGroup, false); // Owner-only metadata update
 
     const targetCaps = getParticipantCapabilities(participants[1], caps.isCurrentUserAdmin, 'my_id');
     assert.strictEqual(targetCaps.canRemove, true);
     assert.strictEqual(targetCaps.canPromote, true);
     assert.strictEqual(targetCaps.canDemote, false);
+  });
+
+  test('8b. Owner sees rename and metadata controls', () => {
+    const groupConv = { roomId: 'grp_1', kind: 'group', name: 'Dev Team' };
+    const participants = [
+      { principalId: 'my_id', role: 'owner' },
+      { principalId: 'user_2', role: 'member' }
+    ];
+    const caps = getGroupCapabilities(groupConv, participants, 'my_id');
+    assert.strictEqual(caps.isCurrentUserOwner, true);
+    assert.strictEqual(caps.canRenameGroup, true);
+    assert.strictEqual(caps.canEditDescription, true);
   });
 
   // 9. Participant admin indicators render correctly
@@ -332,14 +344,16 @@ describe('WhatsApp-Style Group Info & Contact Info Action System (42 Invariants)
     assert.strictEqual(groupCaps.canDeleteChat, false);
   });
 
-  // 31. Switching admin <-> member refreshes actions
+  // 31. Switching admin/owner <-> member refreshes actions
   test('31. Switching admin <-> member refreshes actions without restart', () => {
     const groupConv = { roomId: 'grp_1', kind: 'group' };
     const memberParticipants = [{ principalId: 'my_id', role: 'member' }];
     const adminParticipants = [{ principalId: 'my_id', role: 'admin' }];
+    const ownerParticipants = [{ principalId: 'my_id', role: 'owner' }];
 
     const memberCaps = getGroupCapabilities(groupConv, memberParticipants, 'my_id');
     const adminCaps = getGroupCapabilities(groupConv, adminParticipants, 'my_id');
+    const ownerCaps = getGroupCapabilities(groupConv, ownerParticipants, 'my_id');
 
     assert.strictEqual(memberCaps.isCurrentUserAdmin, false);
     assert.strictEqual(memberCaps.canAddPeople, false);
@@ -347,7 +361,10 @@ describe('WhatsApp-Style Group Info & Contact Info Action System (42 Invariants)
 
     assert.strictEqual(adminCaps.isCurrentUserAdmin, true);
     assert.strictEqual(adminCaps.canAddPeople, true);
-    assert.strictEqual(adminCaps.canRenameGroup, true);
+    assert.strictEqual(adminCaps.canRenameGroup, false); // non-owner admin cannot rename
+
+    assert.strictEqual(ownerCaps.isCurrentUserOwner, true);
+    assert.strictEqual(ownerCaps.canRenameGroup, true); // owner can rename
   });
 
   // 32. Group Info refreshes after participant changes
@@ -497,13 +514,18 @@ describe('WhatsApp-Style Group Info & Contact Info Action System (42 Invariants)
       const groupConv = { roomId: 'grp_1', kind: 'group', name: 'Dev' };
       const participants = [
         { principalId: 'u_alice', role: 'admin' },
-        { principalId: 'u_bob', role: 'member' }
+        { principalId: 'u_bob', role: 'member' },
+        { principalId: 'u_carol', role: 'creator' }
       ];
       const caps = getGroupCapabilities(groupConv, participants, 'u_alice');
       assert.strictEqual(caps.isAdmin, true);
       assert.strictEqual(caps.isCurrentUserAdmin, true);
       assert.strictEqual(caps.canAddPeople, true);
-      assert.strictEqual(caps.canRenameGroup, true);
+      assert.strictEqual(caps.canRenameGroup, false); // non-owner admin cannot rename
+
+      const creatorCaps = getGroupCapabilities(groupConv, participants, 'u_carol');
+      assert.strictEqual(creatorCaps.isOwner, true);
+      assert.strictEqual(creatorCaps.canRenameGroup, true); // creator/owner can rename
     });
 
     test('Regression 6: Normal member role is calculated correctly', () => {

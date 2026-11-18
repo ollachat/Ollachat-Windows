@@ -690,7 +690,13 @@ describe('VideoCallManager & Video Calling Architecture', () => {
     await manager.startVideoCall('room-rtc-video-sig', 'Quinn');
 
     assert.equal(rtcBridge.connectCalls.length, 1);
-    assert.deepEqual(rtcBridge.connectCalls[0].options, { isVideo: true, callType: 'video' });
+    assert.deepEqual(rtcBridge.connectCalls[0].options, {
+      isVideo: true,
+      callType: 'video',
+      callId: undefined,
+      callEpoch: manager.callEpoch,
+      ownerId: `call-${manager.callEpoch}`
+    });
     assert.equal(rtcBridge.sendOfferCalls.length, 1);
     assert.ok(rtcBridge.sendOfferCalls[0].includes('video'));
     await manager.endCall(false);

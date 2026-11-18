@@ -74,6 +74,7 @@ describe('Add People Bugfix - Button Visibility', () => {
     const { VoiceCallManager, CALL_STATE } = await import('../src/call/voice-call-manager.js');
     const manager = new VoiceCallManager({});
     manager.roomId = 'room-callee-connected-1';
+    manager._beginCallInstance();
     manager._setState(CALL_STATE.INCOMING_RINGING);
     manager._setState(CALL_STATE.CONNECTING);
     manager._markConnected();
@@ -254,6 +255,7 @@ describe('Add People Bugfix - Decline and Departure Invariants', () => {
     const { VoiceCallManager, CALL_STATE } = await import('../src/call/voice-call-manager.js');
     const manager = new VoiceCallManager({});
     manager.roomId = 'room-decline-inv-1';
+    manager._beginCallInstance();
     manager._setState(CALL_STATE.OUTGOING_RINGING);
     manager._setState(CALL_STATE.CONNECTING);
     manager._markConnected();
@@ -302,6 +304,7 @@ describe('Add People Bugfix - Media and 1-to-1 Regression', () => {
     const { VoiceCallManager, CALL_STATE } = await import('../src/call/voice-call-manager.js');
     const manager = new VoiceCallManager({});
     manager.roomId = 'room-1to1-audio-1';
+    manager._beginCallInstance();
     manager._setState(CALL_STATE.OUTGOING_RINGING);
     assert.equal(manager.state, CALL_STATE.OUTGOING_RINGING);
     manager._setState(CALL_STATE.CONNECTING);
@@ -321,6 +324,7 @@ describe('Add People Bugfix - Media and 1-to-1 Regression', () => {
     const { VoiceCallManager, CALL_STATE } = await import('../src/call/voice-call-manager.js');
     const manager = new VoiceCallManager({});
     manager.roomId = 'room-1to1-video-1';
+    manager._beginCallInstance();
     manager.isVideo = true;
     manager.mode = 'video';
     manager._setState(CALL_STATE.INCOMING_RINGING);

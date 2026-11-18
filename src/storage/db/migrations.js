@@ -256,5 +256,16 @@ export const MIGRATIONS = [
         }
       }
     }
+  },
+  {
+    version: 6,
+    description: 'Add is_exited column to conversations table for persisted exited group state',
+    up: async (db) => {
+      const tableInfo = await db.all("PRAGMA table_info('conversations');");
+      const hasIsExited = Array.isArray(tableInfo) && tableInfo.some((col) => col.name === 'is_exited');
+      if (!hasIsExited) {
+        await db.exec('ALTER TABLE conversations ADD COLUMN is_exited INTEGER DEFAULT 0;');
+      }
+    }
   }
 ];

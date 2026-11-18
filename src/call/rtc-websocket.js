@@ -35,7 +35,7 @@ export class RtcEventEmitter {
   }
 
   on(event, listener) {
-    if (typeof listener !== 'function') return () => {};
+    if (typeof listener !== 'function') return () => { };
     if (!this._listeners.has(event)) {
       this._listeners.set(event, new Set());
     }
@@ -109,6 +109,7 @@ export class RtcWebSocket extends RtcEventEmitter {
     this.state = RTC_CONNECTION_STATE.DISCONNECTED;
     this._socket = null;
     this._generation = 0;
+    this._pendingConnect = null;
   }
 
   /**
@@ -145,9 +146,20 @@ export class RtcWebSocket extends RtcEventEmitter {
     const validatedToken = RtcWebSocket.validateRoomToken(token || this._token);
     const targetUrl = (url || this.url || DEFAULT_RTC_WS_URL).trim();
 
-    // If already connected or connecting, disconnect previous socket first
-    if (this._socket) {
-      this.disconnect();
+    const previousAttempt = this._pendingConnect;
+    if (previousAttempt && !previousAttempt.settled) {
+      previousAttempt.settled = true;
+      this._pendingConnect = null;
+      previousAttempt.reject(new Error('RTC connection attempt superseded'));
+    }
+    const previousSocket = this._socket;
+    this._socket = null;
+    if (previousSocket) {
+      try {
+        if (previousSocket.readyState === 0 || previousSocket.readyState === 1) {
+          previousSocket.close(1000, 'Connection superseded');
+        }
+      } catch { }
     }
 
     this.roomId = targetRoomId;
@@ -159,7 +171,24 @@ export class RtcWebSocket extends RtcEventEmitter {
     this._setState(RTC_CONNECTION_STATE.CONNECTING);
 
     return new Promise((resolve, reject) => {
-      let settled = false;
+      const attempt = {
+        generation: currentGen,
+        roomId: targetRoomId,
+        settled: false,
+        resolve,
+        reject
+      };
+      this._pendingConnect = attempt;
+      const settle = (error = null) => {
+        if (attempt.settled) return false;
+        attempt.settled = true;
+        if (this._pendingConnect === attempt) {
+          this._pendingConnect = null;
+        }
+        if (error) reject(error);
+        else resolve();
+        return true;
+      };
       const subprotocols = ['chatbox', `bearer.${validatedToken}`];
 
       try {
@@ -169,12 +198,9 @@ export class RtcWebSocket extends RtcEventEmitter {
         ws.onopen = () => {
           if (this._generation !== currentGen || this._socket !== ws) return;
           this._setState(RTC_CONNECTION_STATE.CONNECTED);
-          this.emit('connected', { roomId: this.roomId });
-          this.emit('event', { type: 'connected', roomId: this.roomId });
-          if (!settled) {
-            settled = true;
-            resolve();
-          }
+          this.emit('connected', { roomId: targetRoomId, generation: currentGen });
+          this.emit('event', { type: 'connected', roomId: targetRoomId, generation: currentGen });
+          settle();
         };
 
         ws.onmessage = (event) => {
@@ -188,14 +214,11 @@ export class RtcWebSocket extends RtcEventEmitter {
           const reason = event?.reason ?? '';
           this._socket = null;
           this._setState(RTC_CONNECTION_STATE.DISCONNECTED);
-          this.emit('disconnected', { code, reason, roomId: this.roomId });
+          this.emit('disconnected', { code, reason, roomId: targetRoomId, generation: currentGen });
           if (code !== 1000 && reason !== 'Client disconnect' && reason !== 'Normal closure') {
-            this.emit('event', { type: 'disconnected', code, reason, roomId: this.roomId });
+            this.emit('event', { type: 'disconnected', code, reason, roomId: targetRoomId, generation: currentGen });
           }
-          if (!settled) {
-            settled = true;
-            resolve();
-          }
+          settle(new Error(redactSensitive(reason || `RTC WebSocket closed before opening (${code})`)));
         };
 
         ws.onerror = (error) => {
@@ -203,19 +226,16 @@ export class RtcWebSocket extends RtcEventEmitter {
           const rawMessage = error?.message || 'WebSocket connection error';
           const safeMessage = redactSensitive(rawMessage);
           this._setState(RTC_CONNECTION_STATE.ERROR);
-          this.emit('error', { error: safeMessage, roomId: this.roomId });
-          this.emit('event', { type: 'error', error: safeMessage, roomId: this.roomId });
-          if (!settled) {
-            settled = true;
-            reject(new Error(safeMessage));
-          }
+          this.emit('error', { error: safeMessage, roomId: targetRoomId, generation: currentGen });
+          this.emit('event', { type: 'error', error: safeMessage, roomId: targetRoomId, generation: currentGen });
+          settle(new Error(safeMessage));
         };
       } catch (err) {
         const safeMessage = redactSensitive(err?.message || 'Failed to instantiate WebSocket');
         this._setState(RTC_CONNECTION_STATE.ERROR);
-        this.emit('error', { error: safeMessage, roomId: this.roomId });
-        this.emit('event', { type: 'error', error: safeMessage, roomId: this.roomId });
-        reject(new Error(safeMessage));
+        this.emit('error', { error: safeMessage, roomId: targetRoomId, generation: currentGen });
+        this.emit('event', { type: 'error', error: safeMessage, roomId: targetRoomId, generation: currentGen });
+        settle(new Error(safeMessage));
       }
     });
   }
@@ -257,9 +277,10 @@ export class RtcWebSocket extends RtcEventEmitter {
 
     if (isEnded) {
       const reason = typeof frame.reason === 'string' ? frame.reason : null;
+      const callId = frame.call_id ?? frame.callId ?? null;
       this._setState(RTC_CONNECTION_STATE.DISCONNECTED);
-      this.emit('call_ended', { event: eventName, reason, roomId: currentRoomId });
-      this.emit('event', { type: 'call_ended', event: eventName, reason, roomId: currentRoomId });
+      this.emit('call_ended', { event: eventName, reason, callId, roomId: currentRoomId });
+      this.emit('event', { type: 'call_ended', event: eventName, reason, callId, roomId: currentRoomId });
       return;
     }
 
@@ -286,12 +307,12 @@ export class RtcWebSocket extends RtcEventEmitter {
       return;
     }
 
-    // 3. Incoming Offer: { type: "offer", sdp: string, request_id?: number, call_type?: string, is_video?: boolean }
+    // 3. Incoming Offer: request_id is an opaque JSON correlation value.
     if (frame.type === 'offer' || frame.cmd === 'offer') {
       const sdp = typeof frame.sdp === 'string' ? frame.sdp : (frame.sdp?.sdp || '');
-      const requestId = typeof frame.request_id === 'number'
+      const requestId = Object.prototype.hasOwnProperty.call(frame, 'request_id')
         ? frame.request_id
-        : (parseInt(frame.request_id, 10) || 0);
+        : 0;
       const callType = frame.call_type || frame.callType || null;
       const isVideo = typeof frame.is_video === 'boolean'
         ? frame.is_video
@@ -341,7 +362,7 @@ export class RtcWebSocket extends RtcEventEmitter {
    * Frame shape: { "cmd": "answer", "sdp": sdp, "request_id": requestId }
    *
    * @param {string} sdp
-   * @param {number} requestId
+   * @param {*} requestId - Opaque JSON correlation value from the offer.
    */
   sendAnswer(sdp, requestId = 0) {
     const sdpObj = typeof sdp === 'object' && sdp !== null ? sdp : {
@@ -351,7 +372,7 @@ export class RtcWebSocket extends RtcEventEmitter {
     const frame = {
       cmd: 'answer',
       sdp: sdpObj,
-      request_id: typeof requestId === 'number' ? requestId : (parseInt(requestId, 10) || 0)
+      request_id: requestId
     };
     this._sendJson(frame);
   }
@@ -403,19 +424,26 @@ export class RtcWebSocket extends RtcEventEmitter {
    */
   disconnect() {
     this._generation++;
-    if (this._socket) {
+    const pendingAttempt = this._pendingConnect;
+    if (pendingAttempt && !pendingAttempt.settled) {
+      pendingAttempt.settled = true;
+      this._pendingConnect = null;
+      pendingAttempt.reject(new Error('RTC connection attempt disconnected'));
+    }
+    const socket = this._socket;
+    this._socket = null;
+    if (socket) {
       try {
         // Ready states: CONNECTING = 0, OPEN = 1
-        if (this._socket.readyState === 0 || this._socket.readyState === 1) {
-          this._socket.close(1000, 'Client disconnect');
+        if (socket.readyState === 0 || socket.readyState === 1) {
+          socket.close(1000, 'Client disconnect');
         }
       } catch {
         // Ignore close error on teardown
       }
-      this._socket = null;
     }
     this._setState(RTC_CONNECTION_STATE.DISCONNECTED);
-    this.emit('disconnected', { code: 1000, reason: 'Client disconnect', roomId: this.roomId });
+    this.emit('disconnected', { code: 1000, reason: 'Client disconnect', roomId: this.roomId, generation: this._generation });
   }
 
   /**

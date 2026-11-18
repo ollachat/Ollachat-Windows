@@ -426,9 +426,10 @@ describe('ChatApi Unit Tests (Conversations & Rooms REST API)', () => {
       assert.equal(mockFetch.calls[2].url, `${TEST_BASE}/rooms/r1/members/me`);
       assert.equal(mockFetch.calls[2].method, 'DELETE');
 
-      await api.updateGroup(MOCK_ROOM_TOKEN, 'r1', { name: 'New Name' });
-      assert.equal(mockFetch.calls[3].url, `${TEST_BASE}/rooms/r1`);
+      await api.updateGroup(MOCK_SESSION_TOKEN, 'r1', { name: 'New Name' });
+      assert.equal(mockFetch.calls[3].url, `${TEST_BASE}/directory/conversations/r1`);
       assert.equal(mockFetch.calls[3].method, 'PATCH');
+      assert.equal(mockFetch.calls[3].headers.Authorization, `Bearer ${MOCK_SESSION_TOKEN}`);
 
       await api.setMemberRole(MOCK_ROOM_TOKEN, 'r1', 'user_admin', 'admin');
       assert.equal(mockFetch.calls[4].url, `${TEST_BASE}/rooms/r1/members/user_admin/role`);

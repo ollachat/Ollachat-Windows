@@ -11,7 +11,7 @@ export const DEFAULT_TIMEOUT_MS = 30000;
 export function normalizeConversation(raw) {
   if (!raw || typeof raw !== 'object') return raw;
   const isBlocked = Boolean(raw.is_blocked || raw.isBlocked || raw.blocked || raw.blocked_by_peer || raw.blockedByPeer || raw.peer?.is_blocked || raw.peer?.isBlocked || raw.peer?.blocked);
-  const avatarUrl = isBlocked ? null : (raw.avatar_url || raw.avatarUrl || null);
+  const avatarUrl = isBlocked ? null : (raw.avatar_url || raw.avatarUrl || raw.icon_url || raw.icon || null);
   return {
     roomId: raw.room_id || '',
     kind: raw.kind || 'direct',
@@ -22,6 +22,8 @@ export function normalizeConversation(raw) {
     blocked: isBlocked,
     avatarUrl,
     avatar_url: avatarUrl,
+    icon: avatarUrl,
+    icon_url: avatarUrl,
     // Preserve exact backend keys
     room_id: raw.room_id || '',
     created_at: raw.created_at || null,
@@ -78,6 +80,7 @@ export function normalizeInboxItem(raw, baseUrl = DEFAULT_API_BASE) {
     roomId: raw.room_id || '',
     kind: raw.kind || 'direct',
     name: raw.name || null,
+    description: raw.description ?? raw.about ?? null,
     mutedUntil: raw.muted_until || null,
     isBlocked,
     blocked: isBlocked,
@@ -97,6 +100,7 @@ export function normalizeInboxItem(raw, baseUrl = DEFAULT_API_BASE) {
       avatar_url: peerAvatarUrl
     } : null,
     lastMessage: raw.last_message ? {
+      id: raw.last_message.id || raw.last_message.message_id || null,
       preview: raw.last_message.preview || null,
       senderId: raw.last_message.sender_id || null,
       createdAt: raw.last_message.created_at || null,
@@ -106,6 +110,10 @@ export function normalizeInboxItem(raw, baseUrl = DEFAULT_API_BASE) {
       created_at: raw.last_message.created_at || null,
       event_seq: raw.last_message.event_seq ?? null
     } : null,
+    lastEventSeq: raw.last_message?.event_seq ?? null,
+    last_event_seq: raw.last_message?.event_seq ?? null,
+    lastMessageTime: raw.last_message?.created_at || null,
+    last_message_time: raw.last_message?.created_at || null,
     unreadCount: typeof raw.unread_count === 'number' ? raw.unread_count : 0,
     // Preserve exact backend keys
     room_id: raw.room_id || '',
@@ -791,6 +799,56 @@ export class ChatApi {
   }
 
   /**
+   * Updates group conversation metadata (name, description, icon).
+   * PATCH /directory/conversations/{roomId}
+   * @param {string} sessionToken User directory session token
+   * @param {string} roomId The group conversation room ID
+   * @param {object} [updates={}]
+   * @param {string|null} [updates.name]
+   * @param {string|null} [updates.description]
+   * @param {string|null} [updates.icon]
+   * @param {string|null} [updates.iconUrl]
+   * @param {string|null} [updates.icon_url]
+   * @returns {Promise<object>}
+   */
+  async updateGroup(sessionToken, roomId, { name = null, description = null, icon = null, iconUrl = null, icon_url = null } = {}) {
+    if (!sessionToken) throw new ApiError('Session token required', 'unauthorized', 401);
+    if (!roomId) throw new ApiError('roomId is required', 'bad_request', 400);
+
+    const body = {};
+    if (name !== null && name !== undefined) body.name = name;
+    if (description !== null && description !== undefined) body.description = description;
+    const finalIcon = icon !== null && icon !== undefined ? icon : (iconUrl !== null && iconUrl !== undefined ? iconUrl : (icon_url !== null && icon_url !== undefined ? icon_url : null));
+    if (finalIcon !== null && finalIcon !== undefined) {
+      body.icon = finalIcon;
+    }
+
+    const cleanRoomId = String(roomId).trim();
+    const data = await this._request(`/directory/conversations/${encodeURIComponent(cleanRoomId)}`, {
+      method: 'PATCH',
+      token: sessionToken,
+      body
+    });
+
+    if (data && typeof data === 'object') {
+      const iconVal = data.icon || data.icon_url || data.avatar_url || data.avatarUrl || null;
+      if (iconVal && !data.avatar_url) data.avatar_url = iconVal;
+      if (iconVal && !data.avatarUrl) data.avatarUrl = iconVal;
+      if (iconVal && !data.icon_url) data.icon_url = iconVal;
+      return { success: true, ...data };
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Alias for updateGroup on Directory Plane.
+   */
+  async updateGroupMetadata(sessionToken, roomId, updates) {
+    return this.updateGroup(sessionToken, roomId, updates);
+  }
+
+  /**
    * Looks up registered contact users by phone numbers.
    * POST /directory/contacts/lookup
    * @param {string} sessionToken
@@ -1135,25 +1193,6 @@ export class ChatApi {
     await this._request(`/rooms/${encodeURIComponent(roomId)}/members/me`, {
       method: 'DELETE',
       token: roomToken
-    });
-    return { success: true };
-  }
-
-  /**
-   * Updates group info (OllacoreApi.kt:299).
-   * PATCH /rooms/{roomId}
-   */
-  async updateGroup(roomToken, roomId, { name = null, description = null, iconUrl = null } = {}) {
-    if (!roomToken) throw new ApiError('Room token required', 'unauthorized', 401);
-    const body = {};
-    if (name !== null) body.name = name;
-    if (description !== null) body.description = description;
-    if (iconUrl !== null) body.icon_url = iconUrl;
-
-    await this._request(`/rooms/${encodeURIComponent(roomId)}`, {
-      method: 'PATCH',
-      token: roomToken,
-      body
     });
     return { success: true };
   }

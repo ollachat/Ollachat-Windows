@@ -13,35 +13,11 @@ function formatDuration(seconds = 0) {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
-let durationTimerInterval = null;
-
-function startDurationTicker(callConnectedAt, initialDuration = 0) {
-  if (durationTimerInterval) {
-    clearInterval(durationTimerInterval);
-    durationTimerInterval = null;
-  }
-  const updateTimes = () => {
-    let s = initialDuration;
-    if (callConnectedAt && typeof callConnectedAt === 'number') {
-      s = Math.max(0, Math.floor((Date.now() - callConnectedAt) / 1000));
-    }
-    const formatted = formatDuration(s);
-    if (audioTimer) audioTimer.textContent = formatted;
-    if (videoTimer) videoTimer.textContent = formatted;
-    if (compactTimer) compactTimer.textContent = formatted;
-  };
-  updateTimes();
-  durationTimerInterval = setInterval(updateTimes, 1000);
-}
-
-function stopDurationTicker() {
-  if (durationTimerInterval) {
-    clearInterval(durationTimerInterval);
-    durationTimerInterval = null;
-  }
-  if (audioTimer) audioTimer.textContent = '00:00';
-  if (videoTimer) videoTimer.textContent = '00:00';
-  if (compactTimer) compactTimer.textContent = '00:00';
+function renderSynchronizedDuration(seconds = 0) {
+  const formatted = formatDuration(seconds);
+  if (audioTimer) audioTimer.textContent = formatted;
+  if (videoTimer) videoTimer.textContent = formatted;
+  if (compactTimer) compactTimer.textContent = formatted;
 }
 
 function getInitials(name = '') {
@@ -146,6 +122,24 @@ const btnHeaderClose = document.getElementById('btn-header-close');
 let currentState = null;
 let currentMode = 'detailed'; // 'compact' | 'detailed'
 let bridgePeerConnection = null;
+let remotePlaybackRejectionLogged = false;
+let lastFloatingUiDiagnostic = '';
+
+function logFloatingUiSynchronization(state) {
+  const diagnostic = {
+    event: 'floating_ui_synchronized',
+    direction: state?.direction || 'unknown',
+    state: state?.state || 'idle',
+    localOwnershipEpoch: state?.localOwnershipEpoch || 0,
+    signalingCorrelation: state?.signalingCorrelation || 'expected_unavailable',
+    ownsManagerState: state?.ownsManagerState === true,
+    ownsPeer: state?.ownsPeer === true
+  };
+  const key = Object.values(diagnostic).join('|');
+  if (key === lastFloatingUiDiagnostic) return;
+  lastFloatingUiDiagnostic = key;
+  console.info('[FloatingCall] CALL_UI_LIFECYCLE', diagnostic);
+}
 
 function applyMode(mode) {
   currentMode = mode || 'detailed';
@@ -170,6 +164,7 @@ function applyMode(mode) {
 function renderState(state) {
   if (!state) return;
   currentState = state;
+  logFloatingUiSynchronization(state);
 
   const isOutgoing = (state.state === 'outgoing_ringing');
   const isIncoming = (state.state === 'incoming_ringing');
@@ -177,9 +172,9 @@ function renderState(state) {
   const peerName = state.peerName || state.peerUserId || 'Contact';
   const initials = getInitials(peerName);
 
-  // Update Compact Widget (State B)
+  // Duration is authoritative in the main renderer/manager and only rendered here.
   if (compactPeerName) compactPeerName.textContent = peerName;
-  if (compactTimer) compactTimer.textContent = formatDuration(state.duration || 0);
+  renderSynchronizedDuration(state.state === 'connected' ? (state.duration || 0) : 0);
 
   if (currentMode === 'compact') {
     viewCompact?.classList.remove('hidden');
@@ -308,12 +303,7 @@ function renderState(state) {
     }
   }
 
-  // Authoritative duration ticker lifecycle
-  if (state.state === 'connected') {
-    startDurationTicker(state.callConnectedAt, state.duration || 0);
-  } else {
-    stopDurationTicker();
-  }
+  // No local interval: timer progression arrives through synchronized IPC state.
 }
 
 // Setup local WebRTC loopback video bridge with mainWindow
@@ -384,8 +374,15 @@ function initLocalVideoBridge() {
           floatingRemoteVideo.playsInline = true;
           floatingRemoteVideo.style.opacity = '1';
           floatingVideoPlaceholder?.classList.add('hidden');
-          floatingRemoteVideo.play().catch((err) => {
-            console.warn('[FloatingCall] video.play error:', err);
+          floatingRemoteVideo.play().then(() => {
+            remotePlaybackRejectionLogged = false;
+          }).catch((error) => {
+            if (remotePlaybackRejectionLogged) return;
+            remotePlaybackRejectionLogged = true;
+            console.warn('[FloatingCall] REMOTE_PLAYBACK_REJECTED', {
+              kind: 'video',
+              errorName: error?.name || 'Error'
+            });
           });
         }
       }

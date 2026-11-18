@@ -44,7 +44,7 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
     getProfile: () => ipcRenderer.invoke('auth:get-profile'),
     updateProfile: (profile) => ipcRenderer.invoke('auth:update-profile', profile),
     onProfileUpdated: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, session) => callback(session);
       ipcRenderer.on('auth:profile-updated', listener);
       return () => ipcRenderer.removeListener('auth:profile-updated', listener);
@@ -67,19 +67,19 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
     getAutoStart: () => ipcRenderer.invoke('app:get-auto-start'),
     setAutoStart: (enabled) => ipcRenderer.invoke('app:set-auto-start', enabled),
     onIntent: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, intent) => callback(intent);
       ipcRenderer.on('app:intent', listener);
       return () => ipcRenderer.removeListener('app:intent', listener);
     },
     onWindowStateChange: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, state) => callback(state);
       ipcRenderer.on('main-window:state-changed', listener);
       return () => ipcRenderer.removeListener('main-window:state-changed', listener);
     },
     onMaximizedState: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, isMaximized) => callback(isMaximized);
       ipcRenderer.on('floating-call:maximized-state', listener);
       return () => ipcRenderer.removeListener('floating-call:maximized-state', listener);
@@ -97,7 +97,7 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
     validate: (filePath) => ipcRenderer.invoke('backup:validate', filePath),
     restore: (filePath, confirmed) => ipcRenderer.invoke('backup:restore', { filePath, confirmed }),
     onRestoreCompleted: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, data) => callback(data);
       ipcRenderer.on('backup:restore-completed', listener);
       return () => ipcRenderer.removeListener('backup:restore-completed', listener);
@@ -114,19 +114,19 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
     addReaction: (roomId, messageId, emoji) => ipcRenderer.invoke('chat:add-reaction', { roomId, messageId, emoji }),
     removeReaction: (roomId, messageId, emoji) => ipcRenderer.invoke('chat:remove-reaction', { roomId, messageId, emoji }),
     onStateChange: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, data) => callback(data);
       ipcRenderer.on('chat:state-change', listener);
       return () => ipcRenderer.removeListener('chat:state-change', listener);
     },
     onEvent: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, frame) => callback(frame);
       ipcRenderer.on('chat:event', listener);
       return () => ipcRenderer.removeListener('chat:event', listener);
     },
     onNavigateRoom: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, roomId, messageId) => callback(roomId, messageId);
       ipcRenderer.on('chat:navigate-room', listener);
       return () => ipcRenderer.removeListener('chat:navigate-room', listener);
@@ -151,6 +151,7 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
     getParticipants: (roomId) => handleApiCall('chat-api:get-participants', roomId),
     getMembers: (roomId) => handleApiCall('chat-api:get-members', roomId),
     updateGroup: (roomId, updates = {}) => handleApiCall('chat-api:update-group', roomId, updates),
+    updateGroupMetadata: (roomId, updates = {}) => handleApiCall('chat-api:update-group', roomId, updates),
     addMember: (roomId, userId) => handleApiCall('chat-api:add-member', roomId, userId),
     addMembers: (roomId, userIds) => handleApiCall('chat-api:add-members', roomId, userIds),
     removeMember: (roomId, principalId) => handleApiCall('chat-api:remove-member', roomId, principalId),
@@ -173,7 +174,7 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
     uploadMedia: (params) => handleApiCall('chat-api:upload-media', params),
     cancelUpload: (params) => handleApiCall('chat-api:cancel-upload', typeof params === 'string' ? { sessionId: params } : params),
     onContactUpdated: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, data) => callback(data);
       ipcRenderer.on('contacts:updated', listener);
       return () => ipcRenderer.removeListener('contacts:updated', listener);
@@ -193,7 +194,7 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
     openAttachment: (options) => ipcRenderer.invoke('media:open-attachment', options),
     deleteCachedAttachments: (attachmentIds) => ipcRenderer.invoke('media:delete-cached-attachments', { attachmentIds }),
     onUploadProgress: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, data) => callback(data);
       ipcRenderer.on('chat:upload-progress', listener);
       return () => ipcRenderer.removeListener('chat:upload-progress', listener);
@@ -201,12 +202,12 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
   },
   rtc: {
     connect: (roomId, options = {}) => ipcRenderer.invoke('rtc:connect', roomId, options),
-    disconnect: () => ipcRenderer.invoke('rtc:disconnect'),
+    disconnect: (owner = {}) => ipcRenderer.invoke('rtc:disconnect', owner),
     getState: () => ipcRenderer.invoke('rtc:get-state'),
     sendOffer: (sdp, options = {}) => ipcRenderer.invoke('rtc:send-offer', { sdp, ...options }),
     sendAnswer: (sdp, requestId) => ipcRenderer.invoke('rtc:send-answer', { sdp, requestId }),
     sendCandidate: (candidate, sdpMid, sdpMLineIndex) => ipcRenderer.invoke('rtc:send-candidate', { candidate, sdpMid, sdpMLineIndex }),
-    leave: () => ipcRenderer.invoke('rtc:leave'),
+    leave: (owner = {}) => ipcRenderer.invoke('rtc:leave', owner),
     getIceServers: (roomId) => ipcRenderer.invoke('rtc:get-ice-servers', roomId),
     supportsMedia: () => ({ audio: true, video: true }),
     getDesktopSources: async (options = {}) => {
@@ -217,13 +218,13 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
       return res.sources || [];
     },
     onStateChange: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, data) => callback(data);
       ipcRenderer.on('rtc:state-change', listener);
       return () => ipcRenderer.removeListener('rtc:state-change', listener);
     },
     onEvent: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, eventData) => callback(eventData);
       ipcRenderer.on('rtc:event', listener);
       return () => ipcRenderer.removeListener('rtc:event', listener);
@@ -251,10 +252,13 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
   db: {
     getConversations: (options = {}) => handleApiCall('db:get-conversations', options),
     saveConversation: (conversation) => handleApiCall('db:save-conversation', conversation),
+    deleteConversation: (roomId) => handleApiCall('db:delete-conversation', roomId),
     getMessages: (options = {}) => handleApiCall('db:get-messages', options),
     getMessageById: (params = {}) => handleApiCall('db:get-message-by-id', typeof params === 'string' ? { id: params } : params),
     saveMessage: (message) => handleApiCall('db:save-message', message),
     updateMessageStatus: (params = {}) => handleApiCall('db:update-message-status', params),
+    updateMessageStarred: (params = {}) => handleApiCall('db:update-message-starred', params),
+    getStarredMessages: (options = {}) => handleApiCall('db:get-starred-messages', options),
     getMessageReceipts: (params = {}) => handleApiCall('db:get-message-receipts', typeof params === 'string' ? { messageId: params } : params),
     updateMessageReaction: (params = {}) => handleApiCall('db:update-message-reaction', params),
     getMessageReactions: (params = {}) => handleApiCall('db:get-message-reactions', typeof params === 'string' ? { messageId: params } : params),
@@ -328,37 +332,37 @@ contextBridge.exposeInMainWorld('ollacoreDesktop', {
     moveBy: (dx, dy) => ipcRenderer.invoke('floating-call:move-by', { dx, dy }),
     setPosition: (x, y) => ipcRenderer.invoke('floating-call:set-position', { x, y }),
     onStateChange: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, state) => callback(state);
       ipcRenderer.on('floating-call:state-changed', listener);
       return () => ipcRenderer.removeListener('floating-call:state-changed', listener);
     },
     onModeChange: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, mode) => callback(mode);
       ipcRenderer.on('floating-call:mode-changed', listener);
       return () => ipcRenderer.removeListener('floating-call:mode-changed', listener);
     },
     onAction: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, action) => callback(action);
       ipcRenderer.on('floating-call:dispatch-action', listener);
       return () => ipcRenderer.removeListener('floating-call:dispatch-action', listener);
     },
     onBridgeSignal: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, signal) => callback(signal);
       ipcRenderer.on('floating-call:bridge-signal', listener);
       return () => ipcRenderer.removeListener('floating-call:bridge-signal', listener);
     },
     onWindowStateChange: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, state) => callback(state);
       ipcRenderer.on('main-window:state-changed', listener);
       return () => ipcRenderer.removeListener('main-window:state-changed', listener);
     },
     onMaximizedState: (callback) => {
-      if (typeof callback !== 'function') return () => {};
+      if (typeof callback !== 'function') return () => { };
       const listener = (_event, isMaximized) => callback(isMaximized);
       ipcRenderer.on('floating-call:maximized-state', listener);
       return () => ipcRenderer.removeListener('floating-call:maximized-state', listener);

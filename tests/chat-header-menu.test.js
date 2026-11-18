@@ -384,5 +384,35 @@ describe('Chat Header Three-Dot Options Menu (Section 30 - 35 Tests)', () => {
     assert.strictEqual(selected.roomId, 'room1', 'getSelectedConversation returns the correct conversation');
     assert.strictEqual(selected.kind, 'direct', 'getSelectedConversation returns correct kind for label logic');
   });
+
+  // 37. Starred Messages option in three-dot menu
+  test('37. Starred Messages option is present in three-dot menu with star icon and accessible attributes', () => {
+    assert.ok(html.includes('id="menu-item-starred-messages"'), 'Must define #menu-item-starred-messages in HTML');
+    assert.ok(html.includes('data-action="starred-messages"'), 'Has data-action="starred-messages"');
+    assert.ok(html.includes('>Starred messages<'), 'Has "Starred messages" text');
+    const menuIdx = html.indexOf('id="chat-header-menu"');
+    const searchIdx = html.indexOf('id="menu-item-chat-search"', menuIdx);
+    const starredIdx = html.indexOf('id="menu-item-starred-messages"', menuIdx);
+    const themeIdx = html.indexOf('id="menu-item-chat-theme"', menuIdx);
+    assert.ok(starredIdx > searchIdx && starredIdx < themeIdx, 'Positioned between Search and Chat theme');
+  });
+
+  // 38. Starred Messages option appears for both direct chats and groups
+  test('38. Starred Messages option appears for both direct chats and groups without restriction', () => {
+    const openMenuIdx = appJs.indexOf('function openChatHeaderMenu()');
+    const openMenuEnd = appJs.indexOf('chatHeaderMenu.classList.remove(\'hidden\');', openMenuIdx);
+    const openMenuBody = appJs.slice(openMenuIdx, openMenuEnd);
+    // Ensure menuItemStarredMessages is not hidden for either direct or group
+    assert.ok(!openMenuBody.includes('menuItemStarredMessages?.classList.add(\'hidden\')'), 'Must not be hidden for direct or group');
+  });
+
+  // 39. Clicking Starred Messages in three-dot menu closes menu and opens starred messages panel
+  test('39. Clicking Starred Messages in three-dot menu closes menu and opens starred messages panel', () => {
+    const listenerIdx = appJs.indexOf('menuItemStarredMessages?.addEventListener(\'click\'');
+    assert.ok(listenerIdx !== -1, 'Must register click listener on menuItemStarredMessages');
+    const handlerBody = appJs.slice(listenerIdx, listenerIdx + 300);
+    assert.ok(handlerBody.includes('closeChatHeaderMenu()'), 'Must close three-dot menu');
+    assert.ok(handlerBody.includes('openStarredMessages(roomId)'), 'Must call openStarredMessages with selected room ID');
+  });
 });
 

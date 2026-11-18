@@ -1819,7 +1819,31 @@ export class ChatShellState {
    * @param {Array} conversations
    */
   setInbox(conversations) {
+    const previousConversations = Array.isArray(this.conversations) ? this.conversations : [];
+    const previousExitedMap = new Map();
+    for (const c of previousConversations) {
+      if (c && (c.isExited || c.exited)) {
+        previousExitedMap.set(String(c.roomId), c);
+      }
+    }
+
     this.conversations = Array.isArray(conversations) ? [...conversations] : [];
+
+    // Protect exited status against server reactivation
+    for (const item of this.conversations) {
+      if (item && item.roomId && previousExitedMap.has(String(item.roomId))) {
+        item.isExited = true;
+        item.exited = true;
+      }
+    }
+
+    // Preserve existing exited groups not returned in active-only server inbox
+    for (const [rId, exitedItem] of previousExitedMap.entries()) {
+      if (!this.conversations.some((c) => c && String(c.roomId) === rId)) {
+        this.conversations.push(exitedItem);
+      }
+    }
+
     for (const item of this.conversations) {
       if (!item || typeof item !== 'object') continue;
       const count = typeof item.unreadCount === 'number' ? item.unreadCount : (item.unread_count || 0);
@@ -1981,6 +2005,8 @@ export class ChatShellState {
     if (item) {
       item.unreadCount = 0;
       item.unread_count = 0;
+      item.isMarkedUnread = false;
+      item.is_marked_unread = false;
     }
     if (this._unreadMessageIds) this._unreadMessageIds.delete(rId);
     if (this._markedUnreadRooms) {
@@ -2737,6 +2763,25 @@ export function validateGroupName(name) {
 }
 
 /**
+ * Validates group description. Maximum 512 characters. Trims input. Empty is valid (clears).
+ * @param {string|null|undefined} raw
+ * @returns {{ valid: boolean, description?: string, error?: string }}
+ */
+export function validateGroupDescription(raw) {
+  if (raw === null || raw === undefined) {
+    return { valid: true, description: '' };
+  }
+  const str = String(raw).trim();
+  if (str.length === 0) {
+    return { valid: true, description: '' };
+  }
+  if (str.length > 512) {
+    return { valid: false, error: 'Group description cannot exceed 512 characters' };
+  }
+  return { valid: true, description: str };
+}
+
+/**
  * State manager for direct chat creation draft.
  */
 export class DirectChatDraft {
@@ -2858,6 +2903,19 @@ export function isParticipantAdmin(participant) {
   if (!role) return false;
   const r = String(role).toLowerCase().trim();
   return r === 'admin' || r === 'owner' || r === 'creator';
+}
+
+/**
+ * Checks if a participant is the group owner or creator.
+ * @param {object|string} participant
+ * @returns {boolean}
+ */
+export function isParticipantOwner(participant) {
+  if (!participant) return false;
+  const role = typeof participant === 'string' ? participant : participant.role;
+  if (!role) return false;
+  const r = String(role).toLowerCase().trim();
+  return r === 'owner' || r === 'creator';
 }
 
 /**
@@ -3471,6 +3529,25 @@ export function resolveMessageContent(message) {
 
   const rawKind = (message.kind || '').toLowerCase();
   const body = message.body && typeof message.body === 'object' ? message.body : {};
+
+  if (rawKind === 'system' || message.isSystem) {
+    const text = typeof body.text === 'string'
+      ? body.text
+      : (typeof message.text === 'string'
+        ? message.text
+        : (typeof message.content === 'string'
+          ? message.content
+          : (typeof message.body === 'string'
+            ? message.body
+            : '')));
+    return {
+      kind: 'system',
+      text,
+      isSystem: true,
+      isDeleted: false,
+      isFallback: false
+    };
+  }
   const isVoiceNote = Boolean(
     body.is_voice_note ||
     body.isVoiceNote ||
@@ -4169,21 +4246,40 @@ export function getReplySenderName(originalMessage, currentUserId = null, getCon
  * @returns {string}
  */
 export function formatGroupMembershipSystemText({
-  action, // 'add' | 'remove' | 'leave'
+  action, // 'add' | 'remove' | 'leave' | 'join_link' | 'role_update' | 'promote'
   actorId = null,
   actorName = null,
   targetUserId = null,
   targetUserIds = null,
   targetName = null,
+  role = null,
+  method = null,
   currentUserId = null,
-  resolveUserNameFn = null
+  resolveUserNameFn = null,
+  prevDescription = undefined,
+  newDescription = undefined,
+  useYouForSelf = false
 } = {}) {
+  // Delegate description actions if invoked via membership formatter
+  if (['description_add', 'description_added', 'description_change', 'description_changed', 'description_edit', 'description_remove', 'description_removed', 'description_clear', 'description'].includes(action)) {
+    return formatGroupDescriptionSystemText({
+      action,
+      actorId,
+      actorName,
+      currentUserId,
+      resolveUserNameFn,
+      prevDescription,
+      newDescription,
+      useYouForSelf
+    });
+  }
+
   const normCurrentUserId = currentUserId ? String(currentUserId).toLowerCase().trim() : null;
   const isActorSelf = Boolean(
     normCurrentUserId && actorId && String(actorId).toLowerCase().trim() === normCurrentUserId
   );
 
-  // Helper to resolve a display name
+  // Helper to resolve a display name safely
   const resolveName = (uid, fallbackName) => {
     if (fallbackName && !isInternalIdOrUuid(fallbackName)) {
       return fallbackName.trim();
@@ -4194,12 +4290,15 @@ export function formatGroupMembershipSystemText({
         return resolved.trim();
       }
     }
-    return fallbackName || 'User';
+    if (fallbackName && typeof fallbackName === 'string' && fallbackName.trim()) {
+      return fallbackName.trim();
+    }
+    return 'A member';
   };
 
   const getResolvedActorName = () => {
     if (isActorSelf) return 'You';
-    return resolveName(actorId, actorName) || 'An admin';
+    return resolveName(actorId, actorName);
   };
 
   // Helper for multiple target IDs
@@ -4207,89 +4306,201 @@ export function formatGroupMembershipSystemText({
     ? targetUserIds
     : (targetUserId ? [targetUserId] : []);
 
-  if (action === 'leave') {
-    const isTargetSelf = Boolean(
-      normCurrentUserId && targetUserId && String(targetUserId).toLowerCase().trim() === normCurrentUserId
-    );
-    if (isActorSelf || isTargetSelf) {
-      return 'You left the group.';
-    }
-    const name = resolveName(targetUserId, targetName);
-    return `${name} left the group.`;
-  }
-
-  if (action === 'remove') {
-    const isTargetSelf = Boolean(
-      normCurrentUserId && targetUserId && String(targetUserId).toLowerCase().trim() === normCurrentUserId
-    );
-    if (isTargetSelf) {
-      if (actorId && !isActorSelf) {
-        const aName = getResolvedActorName();
-        return `You were removed from the group by ${aName}.`;
-      }
-      return 'You were removed from the group.';
-    }
-
-    const tName = resolveName(targetUserId, targetName);
-    if (isActorSelf) {
-      return `You removed ${tName}.`;
-    }
-    if (actorId) {
-      const aName = getResolvedActorName();
-      return `${aName} removed ${tName}.`;
-    }
-    return `${tName} was removed.`;
-  }
-
-  // action === 'add'
-  // Check if multiple targets
-  if (targetIdList.length > 1) {
-    const targetNames = targetIdList.map((id) => {
-      if (normCurrentUserId && String(id).toLowerCase().trim() === normCurrentUserId) {
-        return 'you';
-      }
-      return resolveName(id, null);
-    });
-
-    let targetsStr = '';
-    if (targetNames.length === 2) {
-      targetsStr = `${targetNames[0]} and ${targetNames[1]}`;
-    } else {
-      targetsStr = `${targetNames.slice(0, -1).join(', ')}, and ${targetNames[targetNames.length - 1]}`;
-    }
-
-    if (isActorSelf) {
-      return `You added ${targetsStr}.`;
-    }
-    if (actorId) {
-      const aName = getResolvedActorName();
-      return `${aName} added ${targetsStr}.`;
-    }
-    return `${targetsStr} were added.`;
-  }
-
   const singleTargetId = targetIdList[0] || targetUserId;
   const isTargetSelf = Boolean(
     normCurrentUserId && singleTargetId && String(singleTargetId).toLowerCase().trim() === normCurrentUserId
   );
 
-  if (isTargetSelf) {
-    if (actorId && !isActorSelf) {
-      const aName = getResolvedActorName();
-      return `${aName} added you.`;
+  // 1. Group link join: "Rahul joined using the group link" / "You joined using the group link"
+  const isLinkJoin = action === 'join_link' || method === 'link' || method === 'group_link' || method === 'invite_link';
+  if (isLinkJoin) {
+    if (isTargetSelf) {
+      return 'You joined using the group link';
     }
-    return 'You were added to the group.';
+    const tName = resolveName(singleTargetId, targetName);
+    return `${tName} joined using the group link`;
   }
 
-  const tName = resolveName(singleTargetId, targetName);
-  if (isActorSelf) {
-    return `You added ${tName}.`;
+  // 2. Role update / admin promotion: "You are now an admin" / "Rahul is now an admin"
+  if (action === 'role_update' || action === 'promote') {
+    const normRole = String(role || '').toLowerCase().trim();
+    const isAdminOrOwner = normRole === 'admin' || normRole === 'owner' || normRole === 'creator';
+    if (!isAdminOrOwner) {
+      return null; // Ordinary member changes are not admin promotions
+    }
+    if (isTargetSelf) {
+      return 'You are now an admin';
+    }
+    const tName = resolveName(singleTargetId, targetName);
+    return `${tName} is now an admin`;
   }
-  if (actorId) {
-    const aName = getResolvedActorName();
-    return `${aName} added ${tName}.`;
+
+  // 3. Member left voluntarily: "Ananya left" / "You left"
+  if (action === 'leave' || (action === 'remove' && actorId && singleTargetId && String(actorId).trim() === String(singleTargetId).trim())) {
+    if (isActorSelf || isTargetSelf) {
+      return 'You left';
+    }
+    const tName = resolveName(singleTargetId, targetName);
+    return `${tName} left`;
   }
-  return `${tName} was added.`;
+
+  // 4. Member removed: "Rahul removed Ananya" / "You removed Rahul" / "Rahul removed you" / "Ananya was removed"
+  if (action === 'remove') {
+    if (isTargetSelf) {
+      if (actorId && !isActorSelf) {
+        const aName = getResolvedActorName();
+        return `${aName} removed you`;
+      }
+      return 'You were removed';
+    }
+
+    const tName = resolveName(singleTargetId, targetName);
+    if (isActorSelf) {
+      return `You removed ${tName}`;
+    }
+    if (actorId && !isActorSelf) {
+      const aName = getResolvedActorName();
+      return `${aName} removed ${tName}`;
+    }
+    return `${tName} was removed`;
+  }
+
+  // 5. Member added: "Rahul added Akhil" / "You added Rahul" / "Rahul added you" / "Akhil was added"
+  if (action === 'add') {
+    if (targetIdList.length > 1) {
+      const targetNames = targetIdList.map((id) => {
+        if (normCurrentUserId && String(id).toLowerCase().trim() === normCurrentUserId) {
+          return 'you';
+        }
+        return resolveName(id, null);
+      });
+
+      let targetsStr = '';
+      if (targetNames.length === 2) {
+        targetsStr = `${targetNames[0]} and ${targetNames[1]}`;
+      } else {
+        targetsStr = `${targetNames.slice(0, -1).join(', ')}, and ${targetNames[targetNames.length - 1]}`;
+      }
+
+      if (isActorSelf) {
+        return `You added ${targetsStr}`;
+      }
+      if (actorId && !isActorSelf) {
+        const aName = getResolvedActorName();
+        return `${aName} added ${targetsStr}`;
+      }
+      return `${targetsStr} were added`;
+    }
+
+    if (isTargetSelf) {
+      if (actorId && !isActorSelf) {
+        const aName = getResolvedActorName();
+        return `${aName} added you`;
+      }
+      return 'You were added';
+    }
+
+    const tName = resolveName(singleTargetId, targetName);
+    if (isActorSelf) {
+      return `You added ${tName}`;
+    }
+    if (actorId && !isActorSelf) {
+      const aName = getResolvedActorName();
+      return `${aName} added ${tName}`;
+    }
+    return `${tName} was added`;
+  }
+
+  return null;
+}
+
+/**
+ * Formats WhatsApp-style system text for group description changes:
+ * - Added: "[User Name] added a group description"
+ * - Changed: "[User Name] changed the group description"
+ * - Removed: "[User Name] removed the group description"
+ *
+ * @param {object} params
+ * @param {string} [params.action] 'add' | 'change' | 'remove' (or aliases)
+ * @param {string} [params.actorId]
+ * @param {string} [params.actorName]
+ * @param {string} [params.currentUserId]
+ * @param {function} [params.resolveUserNameFn]
+ * @param {string} [params.prevDescription]
+ * @param {string} [params.newDescription]
+ * @param {boolean} [params.useYouForSelf=false]
+ * @returns {string|null}
+ */
+export function formatGroupDescriptionSystemText({
+  action = null,
+  actorId = null,
+  actorName = null,
+  currentUserId = null,
+  resolveUserNameFn = null,
+  prevDescription = undefined,
+  newDescription = undefined,
+  useYouForSelf = false
+} = {}) {
+  let effectiveAction = action ? String(action).toLowerCase().trim() : null;
+  if (!effectiveAction && (prevDescription !== undefined || newDescription !== undefined)) {
+    const hasPrev = Boolean(prevDescription && typeof prevDescription === 'string' && prevDescription.trim().length > 0);
+    const hasNew = Boolean(newDescription && typeof newDescription === 'string' && newDescription.trim().length > 0);
+    if (!hasPrev && hasNew) {
+      effectiveAction = 'add';
+    } else if (hasPrev && !hasNew) {
+      effectiveAction = 'remove';
+    } else if (hasPrev && hasNew && prevDescription.trim() !== newDescription.trim()) {
+      effectiveAction = 'change';
+    } else {
+      return null;
+    }
+  }
+
+  if (['add', 'added', 'description_add', 'description_added'].includes(effectiveAction)) {
+    effectiveAction = 'add';
+  } else if (['change', 'changed', 'edit', 'edited', 'description_change', 'description_changed', 'description_edit'].includes(effectiveAction)) {
+    effectiveAction = 'change';
+  } else if (['remove', 'removed', 'delete', 'deleted', 'clear', 'cleared', 'description_remove', 'description_removed', 'description_clear'].includes(effectiveAction)) {
+    effectiveAction = 'remove';
+  } else {
+    return null;
+  }
+
+  const normCurrentUserId = currentUserId ? String(currentUserId).toLowerCase().trim() : null;
+  const isActorSelf = Boolean(
+    normCurrentUserId && actorId && String(actorId).toLowerCase().trim() === normCurrentUserId
+  );
+
+  let resolvedActor = null;
+  if (isActorSelf && useYouForSelf) {
+    resolvedActor = 'You';
+  } else if (actorName && !isInternalIdOrUuid(actorName)) {
+    resolvedActor = String(actorName).trim();
+  } else if (typeof resolveUserNameFn === 'function' && actorId) {
+    const res = resolveUserNameFn(actorId);
+    if (res && !isInternalIdOrUuid(res)) {
+      resolvedActor = String(res).trim();
+    }
+  } else if (isActorSelf) {
+    resolvedActor = 'You';
+  }
+
+  if (!resolvedActor) {
+    resolvedActor = actorName && typeof actorName === 'string' && actorName.trim()
+      ? actorName.trim()
+      : 'Someone';
+  }
+
+  switch (effectiveAction) {
+    case 'add':
+      return `${resolvedActor} added a group description`;
+    case 'change':
+      return `${resolvedActor} changed the group description`;
+    case 'remove':
+      return `${resolvedActor} removed the group description`;
+    default:
+      return null;
+  }
 }
 
 /**
@@ -5269,7 +5480,13 @@ export class RoomMessagesState {
       }
     }
 
-    this.messages = this._deduplicate([...filteredMessages, ...callMessages, ...pendingOptimistic]);
+    // Preserve local system messages already in this room
+    const existingSystemMessages = this.messages.filter((m) => {
+      if (m?.roomId && this.roomId && m.roomId !== this.roomId) return false;
+      return m?.kind === 'system' || m?.type === 'system';
+    });
+
+    this.messages = this._deduplicate([...filteredMessages, ...callMessages, ...existingSystemMessages, ...pendingOptimistic]);
     this.hasMore = Boolean(hasMore);
     this.isLoadingInitial = false;
     this.isLoadingOlder = false;
@@ -5971,6 +6188,30 @@ export class RoomMessagesState {
       msg.attachments = updates.attachments;
     }
     return true;
+  }
+
+  /**
+   * Appends or reconciles a system message in this room's message history.
+   * @param {object} systemMsg
+   * @returns {object|null}
+   */
+  addSystemMessage(systemMsg) {
+    if (!systemMsg || typeof systemMsg !== 'object') return null;
+    const id = systemMsg.id || systemMsg.messageId || systemMsg.clientMessageId;
+    if (!id) return null;
+    const existingIndex = this.messages.findIndex(
+      (m) => (m.id && m.id === id) ||
+        (m.clientMessageId && m.clientMessageId === id) ||
+        (m.client_message_id && m.client_message_id === id)
+    );
+    if (existingIndex !== -1) {
+      this.messages[existingIndex] = { ...this.messages[existingIndex], ...systemMsg };
+      return this.messages[existingIndex];
+    } else {
+      this.messages.push(systemMsg);
+      this.messages = this._deduplicate(this.messages);
+      return systemMsg;
+    }
   }
 
   /**
@@ -6768,11 +7009,14 @@ export function getGroupCapabilities(conversation, participants = [], currentUse
       title: 'Contact info',
       isExited: false,
       isAdmin: false,
+      isOwner: false,
       isCurrentUserAdmin: false,
+      isCurrentUserOwner: false,
       isMember: false,
       currentUserRole: 'member',
       canAddPeople: false,
       canRenameGroup: false,
+      canEditDescription: false,
       canExitGroup: false,
       canDeleteChat: true,
       canClearChat: true,
@@ -6786,6 +7030,7 @@ export function getGroupCapabilities(conversation, participants = [], currentUse
   const rawRole = self?.role || conversation.my_role || conversation.myRole || (isParticipantAdmin(self) ? 'admin' : 'member');
   const currentUserRole = String(rawRole || 'member').toLowerCase().trim();
   const isAdmin = !isExited && Boolean(self && isParticipantAdmin(self));
+  const isOwner = !isExited && Boolean(self && isParticipantOwner(self));
   const isMember = !isExited && Boolean(self);
 
   return {
@@ -6793,11 +7038,14 @@ export function getGroupCapabilities(conversation, participants = [], currentUse
     title: 'Group info',
     isExited,
     isAdmin,
+    isOwner,
     isCurrentUserAdmin: isAdmin,
+    isCurrentUserOwner: isOwner,
     isMember,
     currentUserRole,
     canAddPeople: isAdmin,
-    canRenameGroup: isAdmin,
+    canRenameGroup: isOwner,
+    canEditDescription: isOwner,
     canExitGroup: isMember || !isExited,
     canDeleteChat: isExited, // Exited groups can be deleted locally from the chat list
     canClearChat: true,
@@ -7162,9 +7410,24 @@ export function findFirstUnreadMessage(messages, {
     return null;
   }
 
+  // If user replied later and conversation is not explicitly marked unread, only consider incoming messages AFTER the latest own message
+  let effectiveIncoming = incoming;
+  if (!isMarkedUnread && currentUserId) {
+    let lastOwnIndex = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (isOwnMessage(messages[i], currentUserId)) {
+        lastOwnIndex = i;
+        break;
+      }
+    }
+    if (lastOwnIndex !== -1) {
+      effectiveIncoming = messages.slice(lastOwnIndex + 1).filter((m) => !isOwnMessage(m, currentUserId));
+    }
+  }
+
   // If a specific targetMessageId is passed, and unread count is 0 or untracked, check if targetMessageId matches an incoming message
   if (targetMessageId && (!trackedUnreadSet || trackedUnreadSet.size === 0) && (!unreadCount || unreadCount <= 1)) {
-    const match = incoming.find(
+    const match = effectiveIncoming.find(
       (m) => m.id === targetMessageId ||
              m.clientMessageId === targetMessageId ||
              m.client_message_id === targetMessageId ||
@@ -7174,8 +7437,8 @@ export function findFirstUnreadMessage(messages, {
   }
 
   if ((trackedUnreadSet && trackedUnreadSet.size > 0) || (trackedEditsSet && trackedEditsSet.size > 0)) {
-    for (let i = 0; i < incoming.length; i++) {
-      const m = incoming[i];
+    for (let i = 0; i < effectiveIncoming.length; i++) {
+      const m = effectiveIncoming[i];
       const mId = m.id ? String(m.id) : null;
       const cId = (m.clientMessageId || m.client_message_id) ? String(m.clientMessageId || m.client_message_id) : null;
       const seq = (typeof m.eventSeq === 'number' && m.eventSeq > 0)
@@ -7195,7 +7458,7 @@ export function findFirstUnreadMessage(messages, {
   }
 
   const unreadByStatus = [];
-  for (const m of incoming) {
+  for (const m of effectiveIncoming) {
     const s = String(m.status || m.deliveryStatus || m.delivery_status || '').toLowerCase();
     if (s !== 'read') {
       unreadByStatus.push(m);
@@ -7210,9 +7473,15 @@ export function findFirstUnreadMessage(messages, {
     return unreadByStatus[0];
   }
 
+  // When all messages are marked as read and conversation is not explicitly marked unread
+  if (unreadByStatus.length === 0 && !isMarkedUnread) {
+    return null;
+  }
+
   if (unreadCount > 0 || isMarkedUnread) {
-    const count = unreadCount > 0 ? Math.min(unreadCount, incoming.length) : 1;
-    return incoming[incoming.length - count];
+    if (effectiveIncoming.length === 0) return null;
+    const count = unreadCount > 0 ? Math.min(unreadCount, effectiveIncoming.length) : 1;
+    return effectiveIncoming[effectiveIncoming.length - count];
   }
 
   return null;

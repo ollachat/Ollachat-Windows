@@ -15,6 +15,7 @@ import {
   getRoomCallRecords,
   validatePhone,
   validateGroupName,
+  validateGroupDescription,
   DirectChatDraft,
   GroupCreationDraft,
   RoomMessagesState,
@@ -52,6 +53,8 @@ import {
   parseTextWithUrls,
   getGroupCapabilities,
   getParticipantCapabilities,
+  formatGroupMembershipSystemText,
+  formatGroupDescriptionSystemText,
   collectAttachmentIdsFromMessage,
   collectAttachmentIdsFromMessages,
   getEligibleAttachmentIdsForDeletion,
@@ -81,6 +84,7 @@ import {
 } from './chat-shell-state.js';
 import { EmojiPicker } from './emoji-picker.js';
 import { VoiceRecorder, RECORDING_STATE } from './voice-recorder.js';
+import { scheduleCallPresentation } from './call-presentation-guard.js';
 import { VoiceCallManager, CALL_STATE, isInternalIdOrUuid } from '../call/voice-call-manager.js';
 import { validateMediaFile, categorizeMediaKind } from '../api/mime-validator.js';
 import {
@@ -109,6 +113,7 @@ import {
   loadConversationsFromDb,
   persistConversationToDb,
   persistConversationsToDb,
+  deleteConversationFromDb,
   loadMessagesFromDb,
   loadMessageByIdFromDb,
   persistMessageToDb,
@@ -117,6 +122,8 @@ import {
   persistMessageEditToDb,
   persistMessageDeletedToDb,
   persistMessageDeletedForMeToDb,
+  loadStarredMessagesFromDb,
+  persistMessageStarredToDb,
   persistCustomListsToDb,
   runLocalStorageMigration,
   hydrateMigratedStateFromDb,
@@ -130,7 +137,7 @@ import {
 if (typeof crypto !== 'undefined' && typeof crypto.randomUUID !== 'function') {
   try {
     crypto.randomUUID = generateUuid;
-  } catch {}
+  } catch { }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -432,6 +439,7 @@ const ctxChatUnreadText = document.getElementById('ctx-chat-unread-text');
 const ctxChatUnreadIcon = document.getElementById('ctx-chat-unread-icon');
 const ctxChatDeleteBtn = document.getElementById('ctx-chat-delete-btn');
 const ctxChatDeleteText = document.getElementById('ctx-chat-delete-text');
+const ctxChatDeleteIcon = document.getElementById('ctx-chat-delete-icon');
 const ctxChatMuteBtn = document.getElementById('ctx-chat-mute-btn');
 const ctxChatMuteText = document.getElementById('ctx-chat-mute-text');
 let contextMenuTargetConversation = null;
@@ -741,6 +749,13 @@ const contactInfoRenameForm = document.getElementById('contact-info-rename-form'
 const contactInfoRenameInput = document.getElementById('contact-info-rename-input');
 const btnContactInfoSaveName = document.getElementById('btn-contact-info-save-name');
 const btnContactInfoCancelName = document.getElementById('btn-contact-info-cancel-name');
+const btnContactInfoEditDesc = document.getElementById('btn-contact-info-edit-desc');
+const contactInfoDescForm = document.getElementById('contact-info-desc-form');
+const contactInfoDescInput = document.getElementById('contact-info-desc-input');
+const contactInfoDescCounter = document.getElementById('contact-info-desc-counter');
+const btnContactInfoSaveDesc = document.getElementById('btn-contact-info-save-desc');
+const btnContactInfoCancelDesc = document.getElementById('btn-contact-info-cancel-desc');
+let isSavingGroupDescription = false;
 const btnGroupAddPeople = document.getElementById('btn-group-add-people');
 const contactInfoFavRow = document.getElementById('contact-info-fav-row');
 const contactInfoFavIcon = document.getElementById('contact-info-fav-icon');
@@ -795,6 +810,16 @@ const btnCloseConfirm = document.getElementById('btn-close-confirm');
 const btnConfirmCancel = document.getElementById('btn-confirm-cancel');
 const btnConfirmProceed = document.getElementById('btn-confirm-proceed');
 
+// Leave Group Confirmation Dialog Elements
+const leaveGroupConfirmModal = document.getElementById('leave-group-confirm-modal');
+const leaveGroupModalTitle = document.getElementById('leave-group-modal-title');
+const leaveGroupModalMessage = document.getElementById('leave-group-modal-message');
+const btnCloseLeaveGroup = document.getElementById('btn-close-leave-group');
+const btnLeaveGroupCancel = document.getElementById('btn-leave-group-cancel');
+const btnLeaveGroupDelete = document.getElementById('btn-leave-group-delete');
+const btnLeaveGroupConfirm = document.getElementById('btn-leave-group-confirm');
+let pendingLeaveGroupRoomId = null;
+
 // Clear Chat Options Modal Elements
 const clearChatModal = document.getElementById('clear-chat-modal');
 const btnCloseClearChat = document.getElementById('btn-close-clear-chat');
@@ -833,6 +858,7 @@ const chatHeaderMenu = document.getElementById('chat-header-menu');
 const menuItemContactInfo = document.getElementById('menu-item-contact-info');
 const menuContactInfoText = document.getElementById('menu-contact-info-text');
 const menuItemChatSearch = document.getElementById('menu-item-chat-search');
+const menuItemStarredMessages = document.getElementById('menu-item-starred-messages');
 const menuItemChatTheme = document.getElementById('menu-item-chat-theme');
 const menuItemToggleFav = document.getElementById('menu-item-toggle-favourite');
 const menuFavText = document.getElementById('menu-fav-text');
@@ -885,6 +911,10 @@ const contactInfoBlockLabel = document.getElementById('contact-info-block-label'
 // Composer Blocked Banner Elements
 const composerBlockedBanner = document.getElementById('composer-blocked-banner');
 const btnUnblockComposer = document.getElementById('btn-unblock-composer') || document.getElementById('btn-blocked-banner-unblock');
+
+// Composer Exited Group Banner Elements
+const composerExitedBanner = document.getElementById('composer-exited-banner');
+const composerExitedText = document.getElementById('composer-exited-text');
 
 let activeMuteModalRoomId = null;
 let activeBlockModalUserId = null;
@@ -944,21 +974,64 @@ const roomMessagesState = new Proxy({}, {
 
 const pendingRoomModalities = new Map();
 
-function sendCallSignal(action, roomId, extra = {}) {
-  if (!roomId || !window.ollacoreDesktop?.chat?.send) return;
+async function sendCallSignal(action, roomId, extra = {}) {
+  const modality = extra.callType || (extra.isVideo ? 'video' : 'voice');
+  const epoch = extra.callEpoch ?? extra.call_epoch ?? null;
+  const logResult = (result, code = null) => {
+    console.info('[VoiceCall] SIGNAL_SEND', {
+      stage: 'renderer_signal_send',
+      action,
+      modality,
+      epoch,
+      result,
+      code
+    });
+  };
+  const fail = (code, message, cause = null) => {
+    logResult('failed', code);
+    const error = new Error(message);
+    error.code = code;
+    if (cause) error.cause = cause;
+    throw error;
+  };
+  const cleanRoomId = typeof roomId === 'string' ? roomId.trim() : '';
+  if (!cleanRoomId) {
+    fail('call_signal_room_required', 'A room is required to send a call signal');
+  }
+  const send = window.ollacoreDesktop?.chat?.send;
+  if (typeof send !== 'function') {
+    fail('call_signal_bridge_unavailable', 'The chat bridge is unavailable');
+  }
+
   const rawId = generateUuid();
   const clientMessageId = rawId.startsWith('call_sig_') ? rawId : `call_sig_${rawId}`;
-  window.ollacoreDesktop.chat.send('message.send', {
-    client_message_id: clientMessageId,
-    kind: 'text',
-    body: {
-      call_signal: action,
-      call_type: extra.callType || (extra.isVideo ? 'video' : 'voice'),
-      is_video: Boolean(extra.isVideo),
-      target_user_id: extra.targetUserId || extra.target_user_id || null,
-      text: ''
-    }
-  }, roomId).catch(() => {});
+  let result;
+  try {
+    result = await send('message.send', {
+      client_message_id: clientMessageId,
+      kind: 'text',
+      body: {
+        call_signal: action,
+        call_type: modality,
+        is_video: Boolean(extra.isVideo),
+        call_id: extra.callId || extra.call_id || null,
+        call_epoch: epoch,
+        target_user_id: extra.targetUserId || extra.target_user_id || null,
+        text: ''
+      }
+    }, cleanRoomId);
+  } catch (err) {
+    fail('call_signal_ipc_rejected', 'The call signal request was rejected', err);
+  }
+  if (!result || result.ok !== true) {
+    const error = new Error('The call signal was not sent');
+    error.code = 'call_signal_send_failed';
+    error.transportCode = typeof result?.code === 'string' ? result.code : null;
+    logResult('failed', error.transportCode || error.code);
+    throw error;
+  }
+  logResult('sent');
+  return result;
 }
 
 // Phase 6B/6C Voice & Video Call Manager Instance
@@ -971,16 +1044,21 @@ const voiceCallManager = new VoiceCallManager({
   remoteAudioElement: remoteVoiceAudio,
   localVideoElement: localVideo,
   remoteVideoElement: remoteVideo,
-  sendSignal: ({ action, roomId, callType, isVideo }) => {
-    sendCallSignal(action, roomId, { callType, isVideo });
+  sendSignal: ({ action, roomId, callType, isVideo, callId, callEpoch }) => {
+    return sendCallSignal(action, roomId, { callType, isVideo, callId, callEpoch });
   }
 });
 
-const recentlyInitiatedCalls = new Map(); // roomId -> timestamp ms
+export const recentlyInitiatedCalls = new Map(); // roomId -> timestamp ms
 
 // Wrap startCall and startVideoCall to automatically record outgoing call intention for direction tracking
 const originalStartCall = voiceCallManager.startCall.bind(voiceCallManager);
-voiceCallManager.startCall = function(roomId, ...args) {
+voiceCallManager.startCall = function (roomId, ...args) {
+  const conv = shellState.conversations?.find((c) => (c.roomId || c.room_id || c.id) === roomId);
+  if (conv?.isExited || conv?.exited) {
+    console.warn('[VoiceCall] Blocked outgoing call to exited group:', roomId);
+    return Promise.reject(new Error('Cannot make calls to an exited group'));
+  }
   if (roomId) {
     recentlyInitiatedCalls.set(String(roomId).trim(), Date.now());
   }
@@ -989,14 +1067,19 @@ voiceCallManager.startCall = function(roomId, ...args) {
   isCallMaximized = false;
   isFullCallUiOpen = true;
   if (typeof window !== 'undefined' && window.ollacoreDesktop?.floatingCall) {
-    window.ollacoreDesktop.floatingCall.show().catch(() => {});
+    window.ollacoreDesktop.floatingCall.show().catch(() => { });
     syncFloatingCallState();
   }
   return originalStartCall(roomId, ...args);
 };
 
 const originalStartVideoCall = voiceCallManager.startVideoCall.bind(voiceCallManager);
-voiceCallManager.startVideoCall = function(roomId, ...args) {
+voiceCallManager.startVideoCall = function (roomId, ...args) {
+  const conv = shellState.conversations?.find((c) => (c.roomId || c.room_id || c.id) === roomId);
+  if (conv?.isExited || conv?.exited) {
+    console.warn('[VideoCall] Blocked outgoing call to exited group:', roomId);
+    return Promise.reject(new Error('Cannot make calls to an exited group'));
+  }
   if (roomId) {
     recentlyInitiatedCalls.set(String(roomId).trim(), Date.now());
   }
@@ -1005,7 +1088,7 @@ voiceCallManager.startVideoCall = function(roomId, ...args) {
   isCallMaximized = false;
   isFullCallUiOpen = true;
   if (typeof window !== 'undefined' && window.ollacoreDesktop?.floatingCall) {
-    window.ollacoreDesktop.floatingCall.show().catch(() => {});
+    window.ollacoreDesktop.floatingCall.show().catch(() => { });
     syncFloatingCallState();
   }
   return originalStartVideoCall(roomId, ...args);
@@ -1078,7 +1161,7 @@ function minimizeCall() {
 
   // Hide desktop floating call window while main app is open
   if (typeof window !== 'undefined' && window.ollacoreDesktop?.floatingCall) {
-    window.ollacoreDesktop.floatingCall.hide().catch(() => {});
+    window.ollacoreDesktop.floatingCall.hide().catch(() => { });
     syncFloatingCallState();
   }
 }
@@ -1115,18 +1198,18 @@ function restoreCall() {
       if (remoteVideo.srcObject !== voiceCallManager._remoteStream) {
         remoteVideo.srcObject = voiceCallManager._remoteStream;
       }
-      remoteVideo.play?.().catch(() => {});
+      remoteVideo.play?.().catch(() => { });
     }
   }
 
   // Only hide desktop floating window if running without floating bridge
   if (!hasFloatingBridge && typeof window !== 'undefined' && window.ollacoreDesktop?.floatingCall) {
-    window.ollacoreDesktop.floatingCall.hide().catch(() => {});
+    window.ollacoreDesktop.floatingCall.hide().catch(() => { });
     syncFloatingCallState();
   }
 
   if (localVideoBridgePc) {
-    try { localVideoBridgePc.close(); } catch {}
+    try { localVideoBridgePc.close(); } catch { }
     localVideoBridgePc = null;
   }
 }
@@ -1135,6 +1218,56 @@ let isMainWindowMinimized = false;
 let isMainWindowVisible = true;
 let isMainWindowFocused = typeof document !== 'undefined' && typeof document.hasFocus === 'function' ? document.hasFocus() : true;
 let localVideoBridgePc = null;
+let lastMainCallUiDiagnostic = '';
+let lastFloatingCallSyncDiagnostic = '';
+
+function getCallUiLifecycleMetadata(state = voiceCallManager?.state || 'idle') {
+  const direction = voiceCallManager?._isIncoming ? 'incoming' : 'outgoing';
+  const localOwnershipEpoch = voiceCallManager?.callEpoch || 0;
+  const signalingCorrelation = voiceCallManager?.signalingEpoch == null
+    ? 'expected_unavailable'
+    : (direction === 'outgoing'
+      ? (voiceCallManager?._calleeAccepted ? 'accepted' : 'pending')
+      : 'retained');
+
+  return {
+    direction,
+    state,
+    localOwnershipEpoch,
+    signalingCorrelation,
+    ownsManagerState: state === voiceCallManager?.state,
+    ownsPeer: Boolean(voiceCallManager?.peerConnection)
+  };
+}
+
+function logCallUiSynchronization(event, metadata, extra = {}) {
+  const diagnosticKey = [
+    event,
+    metadata.direction,
+    metadata.state,
+    metadata.localOwnershipEpoch,
+    metadata.signalingCorrelation,
+    metadata.ownsManagerState,
+    metadata.ownsPeer,
+    extra.hasFloatingBridge ?? ''
+  ].join('|');
+  const previousKey = event === 'main_ui_synchronized'
+    ? lastMainCallUiDiagnostic
+    : lastFloatingCallSyncDiagnostic;
+  if (diagnosticKey === previousKey) return;
+
+  if (event === 'main_ui_synchronized') {
+    lastMainCallUiDiagnostic = diagnosticKey;
+  } else {
+    lastFloatingCallSyncDiagnostic = diagnosticKey;
+  }
+
+  console.info('[VoiceCall] CALL_UI_LIFECYCLE', {
+    event,
+    ...metadata,
+    ...extra
+  });
+}
 
 export function isAppActiveAndFocused() {
   return isWindowActiveAndVisible(typeof document !== 'undefined' ? document : null, {
@@ -1147,6 +1280,7 @@ export function isAppActiveAndFocused() {
 function syncFloatingCallState() {
   if (typeof window === 'undefined' || !window.ollacoreDesktop?.floatingCall) return;
   const state = voiceCallManager?.state || 'idle';
+  const lifecycle = getCallUiLifecycleMetadata(state);
   const isVideo = Boolean(voiceCallManager?.isVideo || voiceCallManager?.mode === 'video');
   const isMuted = Boolean(voiceCallManager?.isMuted);
   const isCameraOff = Boolean(voiceCallManager?.isCameraOff);
@@ -1157,8 +1291,17 @@ function syncFloatingCallState() {
   const peerUserId = voiceCallManager?.peerUserId || null;
   const isScreenSharing = Boolean(voiceCallManager?.isScreenSharing);
 
+  logCallUiSynchronization('floating_ui_state_sent', lifecycle, {
+    hasFloatingBridge: true
+  });
+
   window.ollacoreDesktop.floatingCall.syncState({
     state,
+    direction: lifecycle.direction,
+    localOwnershipEpoch: lifecycle.localOwnershipEpoch,
+    signalingCorrelation: lifecycle.signalingCorrelation,
+    ownsManagerState: lifecycle.ownsManagerState,
+    ownsPeer: lifecycle.ownsPeer,
     isVideo,
     isMuted,
     isCameraOff,
@@ -1169,7 +1312,7 @@ function syncFloatingCallState() {
     peerUserId,
     isScreenSharing,
     isCallMinimized: Boolean(isCallMinimized)
-  }).catch(() => {});
+  }).catch(() => { });
 
   if ((isVideo || voiceCallManager?.remoteScreenSharing) && !localVideoBridgePc) {
     startFloatingVideoBridge();
@@ -1185,7 +1328,7 @@ function startFloatingVideoBridge() {
   const localStream = voiceCallManager?._localStream || localVideo?.srcObject;
 
   if (localVideoBridgePc) {
-    try { localVideoBridgePc.close(); } catch {}
+    try { localVideoBridgePc.close(); } catch { }
     localVideoBridgePc = null;
   }
 
@@ -1222,7 +1365,7 @@ function startFloatingVideoBridge() {
           sdpMid: e.candidate.sdpMid,
           sdpMLineIndex: e.candidate.sdpMLineIndex
         }
-      }).catch(() => {});
+      }).catch(() => { });
     }
   };
 
@@ -1239,7 +1382,7 @@ function startFloatingVideoBridge() {
             localMid = tc.mid;
           }
         }
-      } catch (_) {}
+      } catch (_) { }
 
       return window.ollacoreDesktop.floatingCall.bridgeSignal({
         type: 'offer',
@@ -1300,6 +1443,8 @@ function updateVoiceCallUi(state, peerName, error) {
   if (!voiceCallOverlay) return;
 
   const isVideo = Boolean(voiceCallManager.isVideo || voiceCallManager.mode === 'video');
+  const hasFloatingBridge = (typeof window !== 'undefined' && Boolean(window.ollacoreDesktop?.floatingCall));
+  const lifecycle = getCallUiLifecycleMetadata(state);
 
   const isFailed = (state === CALL_STATE.FAILED || voiceCallManager.state === CALL_STATE.FAILED);
   if ((state === CALL_STATE.IDLE || voiceCallManager.isEnded) && !isFailed) {
@@ -1331,20 +1476,22 @@ function updateVoiceCallUi(state, peerName, error) {
     if (callMaximizeIcon) callMaximizeIcon.innerHTML = UI_ICONS.maximize;
     if (callPopoutIcon) callPopoutIcon.innerHTML = UI_ICONS.popout;
     if (hasFloatingBridge) {
-      window.ollacoreDesktop.floatingCall.hide().catch(() => {});
+      window.ollacoreDesktop.floatingCall.hide().catch(() => { });
     }
+    logCallUiSynchronization('main_ui_synchronized', lifecycle, {
+      hasFloatingBridge
+    });
     return;
   }
 
   const isIncoming = (state === CALL_STATE.INCOMING_RINGING);
   const isOutgoing = (state === CALL_STATE.OUTGOING_RINGING);
   const isRinging = (isIncoming || isOutgoing);
-  const hasFloatingBridge = (typeof window !== 'undefined' && Boolean(window.ollacoreDesktop?.floatingCall));
 
   if (hasFloatingBridge) {
     // Dedicated Desktop Standalone Window handles call presentation (WhatsApp Desktop model)
     voiceCallOverlay.classList.add('hidden');
-    window.ollacoreDesktop.floatingCall.show().catch(() => {});
+    window.ollacoreDesktop.floatingCall.show().catch(() => { });
     syncFloatingCallState();
     if (state === CALL_STATE.CONNECTED && isVideo) {
       startFloatingVideoBridge();
@@ -1469,7 +1616,7 @@ function updateVoiceCallUi(state, peerName, error) {
     videoStage?.classList.remove('is-screenshare-active', 'is-local-screenshare', 'is-remote-screenshare');
     if (remoteVideo && !isVideo) {
       remoteVideo.srcObject = null;
-      try { remoteVideo.load?.(); } catch (_) {}
+      try { remoteVideo.load?.(); } catch (_) { }
     }
     callPeerAvatar?.classList.remove('hidden');
     if (callPeerAvatar) {
@@ -1672,7 +1819,7 @@ function updateVoiceCallUi(state, peerName, error) {
       if (hasFloatingBridge) {
         syncFloatingCallState();
       }
-      setTimeout(() => {
+      scheduleCallPresentation(voiceCallManager, () => {
         if (voiceCallManager.state === CALL_STATE.FAILED || voiceCallManager.state === CALL_STATE.IDLE || voiceCallManager.isEnded) {
           updateVoiceCallUi(CALL_STATE.IDLE);
         }
@@ -1700,6 +1847,9 @@ function updateVoiceCallUi(state, peerName, error) {
     callMinimizedControls?.classList.add('hidden');
   }
 
+  logCallUiSynchronization('main_ui_synchronized', lifecycle, {
+    hasFloatingBridge
+  });
   syncFloatingCallState();
 }
 
@@ -1777,7 +1927,7 @@ function stopLocalTyping(roomId = null) {
   lastLocalTypingSent = 0;
 
   if (wasTyping && targetRoom && window.ollacoreDesktop?.chat?.typingStop) {
-    window.ollacoreDesktop.chat.typingStop(targetRoom).catch(() => {});
+    window.ollacoreDesktop.chat.typingStop(targetRoom).catch(() => { });
   }
 }
 
@@ -1804,7 +1954,7 @@ function handleLocalUserTyping(roomId = null) {
     activeTypingRoomId = targetRoom;
     lastLocalTypingSent = now;
     if (window.ollacoreDesktop?.chat?.typingStart) {
-      window.ollacoreDesktop.chat.typingStart(targetRoom).catch(() => {});
+      window.ollacoreDesktop.chat.typingStart(targetRoom).catch(() => { });
     }
   }
 
@@ -2040,7 +2190,7 @@ function updateProfileDisplay(session) {
           renderConversationList();
           renderCustomListFilters();
           updateChatFilterCounts();
-        }).catch(() => {});
+        }).catch(() => { });
       }
     }).catch((err) => {
       console.warn('[Migrator] Background migration encountered an error:', err);
@@ -2071,7 +2221,7 @@ function updateProfileDisplay(session) {
           });
         }
       });
-    }).catch(() => {});
+    }).catch(() => { });
   }
   const name = session?.displayName || session?.phone || 'OllaChat User';
   const phone = session?.phone || '';
@@ -2584,7 +2734,7 @@ function handleSaveCustomList() {
       renderCustomListFilters();
       renderConversationList();
     }
-    persistCustomListsToDb(shellState.customLists).catch(() => {});
+    persistCustomListsToDb(shellState.customLists).catch(() => { });
   } catch (err) {
     if (customListError) {
       customListError.textContent = err.message || 'Failed to save custom list.';
@@ -2624,7 +2774,7 @@ function closeDeleteCustomListModal() {
 function handleConfirmDeleteCustomList() {
   if (currentDeletingListId) {
     shellState.deleteCustomList(currentDeletingListId);
-    persistCustomListsToDb(shellState.customLists).catch(() => {});
+    persistCustomListsToDb(shellState.customLists).catch(() => { });
     closeDeleteCustomListModal();
     renderCustomListFilters();
     setActiveChatFilter(shellState.activeFilter);
@@ -2814,7 +2964,7 @@ function closeChangeChatListsModal() {
 /**
  * Closes the conversation context menu.
  */
-function closeConversationContextMenu() {
+export function closeConversationContextMenu() {
   if (conversationContextMenu) {
     conversationContextMenu.classList.add('hidden');
   }
@@ -2865,7 +3015,7 @@ async function confirmMuteConversation() {
     if (conv) {
       conv.mutedUntil = mutedUntil;
       conv.muted_until = mutedUntil;
-      persistConversationToDb(conv).catch(() => {});
+      persistConversationToDb(conv).catch(() => { });
     }
     shellState.setConversationMuted(roomId, mutedUntil);
     renderConversationList();
@@ -2899,7 +3049,7 @@ async function handleUnmuteConversation(roomId) {
     if (conv) {
       conv.mutedUntil = null;
       conv.muted_until = null;
-      persistConversationToDb(conv).catch(() => {});
+      persistConversationToDb(conv).catch(() => { });
     }
     shellState.setConversationMuted(roomId, null);
     renderConversationList();
@@ -2981,7 +3131,7 @@ async function confirmBlockContact() {
         displayName,
         phone,
         since: res?.since || new Date().toISOString()
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     updateBlockedCountHint();
@@ -3029,7 +3179,7 @@ async function handleUnblockContact(userId) {
     await window.ollacoreDesktop.chatApi.unblockUser(userId);
     shellState.removeBlockedUser(userId);
     if (window.ollacoreDesktop?.db?.removeBlockedUser) {
-      await window.ollacoreDesktop.db.removeBlockedUser(userId).catch(() => {});
+      await window.ollacoreDesktop.db.removeBlockedUser(userId).catch(() => { });
     }
     updateBlockedCountHint();
     renderConversationList();
@@ -3164,7 +3314,7 @@ async function loadBlockedUsers() {
       updateBlockedCountHint();
       updated = true;
       if (window.ollacoreDesktop?.db?.saveBlockedUsers) {
-        await window.ollacoreDesktop.db.saveBlockedUsers(blocks).catch(() => {});
+        await window.ollacoreDesktop.db.saveBlockedUsers(blocks).catch(() => { });
       }
     } catch (err) {
       console.warn('[ChatAPI] Failed to fetch blocked users from server:', err);
@@ -3192,7 +3342,7 @@ async function loadBlockedUsers() {
  * @param {object} item
  * @param {HTMLElement|null} anchorEl
  */
-function openConversationContextMenu(e, item, anchorEl = null) {
+export function openConversationContextMenu(e, item, anchorEl = null) {
   if (!conversationContextMenu || !item) return;
   closeContextMenu();
 
@@ -3214,6 +3364,33 @@ function openConversationContextMenu(e, item, anchorEl = null) {
   const isMuted = shellState.isConversationMuted(item);
   if (ctxChatMuteText) {
     ctxChatMuteText.textContent = isMuted ? 'Unmute notifications' : 'Mute notifications';
+  }
+
+  const isGroup = Boolean(item.kind === 'group' || item.type === 'group');
+  const isExited = Boolean(item.isExited || item.exited);
+
+  if (isGroup && !isExited) {
+    if (ctxChatDeleteText) {
+      ctxChatDeleteText.textContent = 'Leave group';
+    }
+    if (ctxChatDeleteBtn) {
+      ctxChatDeleteBtn.setAttribute('data-action', 'leave-group');
+      ctxChatDeleteBtn.title = 'Leave group';
+    }
+    if (ctxChatDeleteIcon) {
+      ctxChatDeleteIcon.innerHTML = '<svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
+    }
+  } else {
+    if (ctxChatDeleteText) {
+      ctxChatDeleteText.textContent = 'Delete chat';
+    }
+    if (ctxChatDeleteBtn) {
+      ctxChatDeleteBtn.setAttribute('data-action', 'delete-chat');
+      ctxChatDeleteBtn.title = 'Delete chat';
+    }
+    if (ctxChatDeleteIcon) {
+      ctxChatDeleteIcon.innerHTML = '<svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+    }
   }
 
   conversationContextMenu.classList.remove('hidden');
@@ -3557,9 +3734,9 @@ function renderCallsHistory() {
       </div>
       <button type="button" class="call-item-action" title="Call back (${isVideo ? 'video' : 'voice'})" aria-label="Call back">
         ${isVideo
-          ? `<svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>`
-          : `<svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`
-        }
+        ? `<svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>`
+        : `<svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`
+      }
       </button>
     `;
 
@@ -3977,6 +4154,41 @@ export function restoreRoomScrollPosition(roomId) {
 }
 
 /**
+ * Updates composer and calling UI controls for exited group status.
+ * @param {object} [conv]
+ */
+export function updateExitedGroupUI(conv) {
+  const isExited = Boolean(conv?.isExited || conv?.exited);
+  if (isExited) {
+    composerBox?.classList.add('hidden');
+    composerBlockedBanner?.classList.add('hidden');
+    composerRecordingBar?.classList.add('hidden');
+    composerExitedBanner?.classList.remove('hidden');
+    btnStartVoiceCall?.setAttribute('disabled', 'true');
+    btnStartVoiceCall?.classList.add('is-disabled');
+    btnStartVoiceCall?.setAttribute('title', 'You left this group');
+    btnStartVideoCall?.setAttribute('disabled', 'true');
+    btnStartVideoCall?.classList.add('is-disabled');
+    btnStartVideoCall?.setAttribute('title', 'You left this group');
+  } else {
+    composerExitedBanner?.classList.add('hidden');
+    btnStartVoiceCall?.removeAttribute('disabled');
+    btnStartVoiceCall?.classList.remove('is-disabled');
+    btnStartVoiceCall?.setAttribute('title', 'Start voice call');
+    btnStartVideoCall?.removeAttribute('disabled');
+    btnStartVideoCall?.classList.remove('is-disabled');
+    btnStartVideoCall?.setAttribute('title', 'Start video call');
+    if (conv?.roomId && shellState.isRoomBlocked(conv.roomId)) {
+      composerBlockedBanner?.classList.remove('hidden');
+      composerBox?.classList.add('hidden');
+    } else {
+      composerBlockedBanner?.classList.add('hidden');
+      composerBox?.classList.remove('hidden');
+    }
+  }
+}
+
+/**
  * Handles selecting a conversation.
  * @param {string} roomId
  */
@@ -3988,6 +4200,10 @@ function selectConversation(roomId, { forceReload = false } = {}) {
 
   const previousRoomId = shellState.selectedRoomId;
   if (previousRoomId !== roomId) {
+    if (unreadDividerDismissTimer) {
+      clearTimeout(unreadDividerDismissTimer);
+      unreadDividerDismissTimer = null;
+    }
     exitMessageSelectionMode();
     if (previousRoomId) {
       saveRoomScrollPosition(previousRoomId);
@@ -4025,8 +4241,8 @@ function selectConversation(roomId, { forceReload = false } = {}) {
     selected = shellState.getSelectedConversation() || provisional;
     try {
       renderConversationList();
-    } catch {}
-    loadInbox().catch(() => {});
+    } catch { }
+    loadInbox().catch(() => { });
   }
 
   // Capture unread state before opening session begins
@@ -4056,10 +4272,14 @@ function selectConversation(roomId, { forceReload = false } = {}) {
 
   // Clear unread indicator when conversation is opened
   if (selected && ((selected.unreadCount || 0) > 0 || (selected.unread_count || 0) > 0 || isMarkedUnread)) {
+    selected.unreadCount = 0;
+    selected.unread_count = 0;
+    selected.isMarkedUnread = false;
+    selected.is_marked_unread = false;
     shellState.markConversationAsRead(roomId);
     updateChatFilterCounts();
     renderConversationList();
-    persistConversationToDb(selected).catch(() => {});
+    persistConversationToDb(selected).catch(() => { });
   }
 
   // Restore draft for newly selected room
@@ -4071,7 +4291,7 @@ function selectConversation(roomId, { forceReload = false } = {}) {
   if (activeVoiceAudio) {
     try {
       activeVoiceAudio.pause();
-    } catch {}
+    } catch { }
     activeVoiceAudio = null;
   }
   if (voiceRecorder && voiceRecorder.isRecording()) {
@@ -4087,14 +4307,8 @@ function selectConversation(roomId, { forceReload = false } = {}) {
   closeChatHeaderMenu();
   closeChangeChatListsModal();
 
-  // Blocked contact composer handling
-  if (shellState.isRoomBlocked(roomId)) {
-    composerBlockedBanner?.classList.remove('hidden');
-    composerBox?.classList.add('hidden');
-  } else {
-    composerBlockedBanner?.classList.add('hidden');
-    composerBox?.classList.remove('hidden');
-  }
+  // Blocked contact & exited group composer/calling handling
+  updateExitedGroupUI(selected);
 
   // Update visual selection in conversation list and remove badge from DOM
   if (conversationList) {
@@ -4149,7 +4363,7 @@ function selectConversation(roomId, { forceReload = false } = {}) {
       btnGroupInfo?.classList.remove('hidden');
       chatHeaderInfo?.classList.add('clickable-group');
       chatHeaderInfo?.setAttribute('title', 'Click for group info');
-      ensureRoomParticipants(roomId).catch(() => {});
+      ensureRoomParticipants(roomId).catch(() => { });
     } else {
       btnGroupInfo?.classList.add('hidden');
       chatHeaderInfo?.classList.remove('clickable-group');
@@ -4194,8 +4408,9 @@ function selectConversation(roomId, { forceReload = false } = {}) {
     }
 
     // Load message history if not already active for this room or if reload is forced or history not yet loaded
+    const isExitedRoom = Boolean(selected?.isExited || selected?.exited);
     if (!isSameRoom || forceReload || !activeRoomMessagesState.isHistoryLoaded) {
-      if (window.ollacoreDesktop?.chat?.connect) {
+      if (!isExitedRoom && window.ollacoreDesktop?.chat?.connect) {
         if (shellState.wsState !== 'connected') {
           updateWsIndicator('connecting', null, roomId);
         }
@@ -4269,13 +4484,71 @@ export function trackAndDispatchReadReceipt(roomId, messageId) {
   });
 }
 
+let unreadDividerDismissTimer = null;
+
+/**
+ * Dismisses the visual unread divider from the DOM and active opening state once messages are seen.
+ * @param {string|null} [roomId=null]
+ */
+export function dismissUnreadDivider(roomId = null) {
+  if (unreadDividerDismissTimer) {
+    clearTimeout(unreadDividerDismissTimer);
+    unreadDividerDismissTimer = null;
+  }
+  const currentRoomId = shellState.selectedRoomId;
+  const targetRoom = roomId || currentRoomId;
+  if (roomId && currentRoomId && roomId !== currentRoomId) return;
+
+  if (activeConversationOpeningState && (!targetRoom || activeConversationOpeningState.roomId === targetRoom)) {
+    activeConversationOpeningState.hasUnreadDivider = false;
+    activeConversationOpeningState.unreadDividerMessageId = null;
+  }
+
+  const dividerEl = messagesList?.querySelector('.unread-messages-divider');
+  if (dividerEl) {
+    dividerEl.classList.add('fading-out');
+    setTimeout(() => {
+      if (dividerEl.parentNode) {
+        dividerEl.parentNode.removeChild(dividerEl);
+      }
+    }, 300);
+  }
+}
+
+/**
+ * Schedules dismissal of the unread divider after a brief viewing delay once messages are seen.
+ * @param {string|null} [roomId=null]
+ * @param {number} [delayMs=1500]
+ */
+export function scheduleDismissUnreadDivider(roomId = null, delayMs = 1500) {
+  const currentRoomId = shellState.selectedRoomId;
+  const targetRoom = roomId || currentRoomId;
+  if (!targetRoom || targetRoom !== currentRoomId) return;
+
+  const dividerEl = messagesList?.querySelector('.unread-messages-divider');
+  if (!dividerEl) return;
+
+  if (unreadDividerDismissTimer) {
+    clearTimeout(unreadDividerDismissTimer);
+  }
+
+  unreadDividerDismissTimer = setTimeout(() => {
+    unreadDividerDismissTimer = null;
+    if (shellState.selectedRoomId === targetRoom) {
+      dismissUnreadDivider(targetRoom);
+    }
+  }, delayMs);
+}
+
 /**
  * Sends read receipts for any unread incoming messages in the currently selected room.
  * Ensures receipts are only transmitted if the conversation is actively visible.
  */
 export function advanceReadCursorForActiveRoom() {
   const roomId = shellState.selectedRoomId;
-  if (!roomId || !isAppActiveAndFocused()) return;
+  if (!roomId) return;
+  if (typeof document !== 'undefined' && document.hidden) return;
+  if (isMainWindowMinimized || !isMainWindowVisible) return;
   const targetState = getOrCreateRoomMessagesState(roomId);
   const currentUserId = targetState?.currentUserId || shellState.currentUser?.userId || shellState.userProfile?.userId;
   if (targetState?.messages?.length) {
@@ -4283,7 +4556,11 @@ export function advanceReadCursorForActiveRoom() {
     if (incoming.length > 0) {
       for (const inc of incoming) {
         if (inc.id && inc.status !== 'read' && inc.status !== 'READ') {
+          inc.status = 'read';
+          inc.deliveryStatus = 'read';
+          inc.delivery_status = 'read';
           trackAndDispatchReadReceipt(roomId, inc.id);
+          persistMessageStatusToDb(inc.id, 'read', null, inc.eventSeq ?? inc.event_seq, roomId).catch(() => { });
         }
       }
     }
@@ -4291,12 +4568,20 @@ export function advanceReadCursorForActiveRoom() {
 
   // Ensure conversation unread state is cleared when actively viewed and read
   const unread = shellState.getRoomUnreadCount?.(roomId) ?? 0;
-  if (unread > 0) {
+  const isMarked = shellState._markedUnreadRooms?.has(String(roomId));
+  const currentConv = shellState.conversations?.find((c) => c.roomId === roomId);
+  const convHasUnread = (currentConv?.unreadCount || 0) > 0 || (currentConv?.unread_count || 0) > 0 || currentConv?.isMarkedUnread || currentConv?.is_marked_unread;
+  if (unread > 0 || isMarked || convHasUnread) {
     shellState.markConversationAsRead(roomId);
+    if (currentConv) {
+      currentConv.isMarkedUnread = false;
+      currentConv.is_marked_unread = false;
+      currentConv.unreadCount = 0;
+      currentConv.unread_count = 0;
+    }
     updateChatFilterCounts();
     renderConversationList();
-    const sel = shellState.conversations?.find((c) => c.roomId === roomId);
-    if (sel) persistConversationToDb(sel).catch(() => {});
+    if (currentConv) persistConversationToDb(currentConv).catch(() => { });
   }
 
   // Acknowledge read state in active session:
@@ -4307,6 +4592,13 @@ export function advanceReadCursorForActiveRoom() {
   }
   const unreadDivider = messagesList?.querySelector('.unread-messages-divider');
   // Visual unread divider remains visible throughout active viewing session; do not remove it here.
+  if (unreadDivider && messagesScrollArea) {
+    const distFromBottom = messagesScrollArea.scrollHeight - messagesScrollArea.scrollTop - messagesScrollArea.clientHeight;
+    const isViewingBottom = distFromBottom <= 140 || messagesScrollArea.scrollHeight <= (messagesScrollArea.clientHeight + 10);
+    if (isViewingBottom) {
+      scheduleDismissUnreadDivider(roomId, 2000);
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -4333,7 +4625,7 @@ export async function syncServerReadCursorForRoom(roomId, token = null) {
       targetState.setPeerLastReadSeq(effectiveSeq);
 
       if (window?.ollacoreDesktop?.db?.setMetadata) {
-        await window.ollacoreDesktop.db.setMetadata('peer_read_seq:' + roomId, String(effectiveSeq)).catch(() => {});
+        await window.ollacoreDesktop.db.setMetadata('peer_read_seq:' + roomId, String(effectiveSeq)).catch(() => { });
       }
 
       const isCurrentSelection = shellState.selectedRoomId === roomId && (token === null || activeLoadToken === token);
@@ -4392,15 +4684,19 @@ async function loadMessagesForRoom(roomId, { forceReload = false } = {}) {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
-  // Reconcile peer read cursor with OllaCore server (GET /rooms/{roomId}/unread)
-  syncServerReadCursorForRoom(roomId, token).catch(() => {});
-
   const currentConv = shellState.conversations?.find((c) => c.roomId === roomId);
-  if (currentConv?.kind === 'group') {
-    ensureRoomParticipants(roomId).catch(() => {});
+  const isExitedRoom = Boolean(currentConv?.isExited || currentConv?.exited);
+
+  if (!isExitedRoom) {
+    // Reconcile peer read cursor with OllaCore server (GET /rooms/{roomId}/unread)
+    syncServerReadCursorForRoom(roomId, token).catch(() => { });
+
+    if (currentConv?.kind === 'group') {
+      ensureRoomParticipants(roomId).catch(() => { });
+    }
   }
 
   // 1. Local-first: Always hydrate local messages from SQLite if room has not yet loaded full history or forceReload
@@ -4455,7 +4751,7 @@ async function loadMessagesForRoom(roomId, { forceReload = false } = {}) {
                     allDbMsgs.push(norm);
                   }
                 }
-              } catch {}
+              } catch { }
             }
           }
         }
@@ -4535,6 +4831,33 @@ async function loadMessagesForRoom(roomId, { forceReload = false } = {}) {
     targetState.isLoadingInitial = true;
   }
 
+  if (isExitedRoom) {
+    targetState.isLoadingInitial = false;
+    targetState.isHistoryLoaded = true;
+    targetState.hasMore = false;
+    messagesLoading?.classList.add('hidden');
+    messagesError?.classList.add('hidden');
+
+    if (targetState.messages.length === 0) {
+      messagesEmpty?.classList.remove('hidden');
+      messagesScrollArea?.classList.add('hidden');
+    } else {
+      messagesEmpty?.classList.add('hidden');
+      messagesScrollArea?.classList.remove('hidden');
+      renderMessages();
+      if (activeConversationOpeningState && activeConversationOpeningState.roomId === roomId && !activeConversationOpeningState.hasPositioned) {
+        if (activeConversationOpeningState.isRestoringPosition || (roomSavedScrollPositions.has(String(roomId)) && !activeConversationOpeningState.targetMessageId)) {
+          restoreRoomScrollPosition(roomId);
+          activeConversationOpeningState.hasPositioned = true;
+        } else {
+          positionConversationAtLatestUnreadOrBottom(roomId);
+        }
+      }
+      renderPinnedBar(roomId);
+    }
+    return;
+  }
+
   try {
     // If room is already fully loaded from the beginning (and not forcing reload), catch up newer messages
     if (targetState.isHistoryLoaded && !forceReload && targetState.newestSeq) {
@@ -4550,7 +4873,7 @@ async function loadMessagesForRoom(roomId, { forceReload = false } = {}) {
       const newMsgs = Array.isArray(res?.messages) ? res.messages : (Array.isArray(res) ? res : []);
       if (newMsgs.length > 0) {
         targetState.mergeServerMessages(newMsgs);
-        persistMessagesToDb(newMsgs, roomId).catch(() => {});
+        persistMessagesToDb(newMsgs, roomId).catch(() => { });
         const wasNearBottom = messagesScrollArea ? ((messagesScrollArea.scrollHeight - messagesScrollArea.scrollTop - messagesScrollArea.clientHeight) < 120) : false;
         renderMessages();
         if (activeConversationOpeningState?.isRestoringPosition || (roomSavedScrollPositions.has(String(roomId)) && !activeConversationOpeningState?.targetMessageId)) {
@@ -4600,7 +4923,7 @@ async function loadMessagesForRoom(roomId, { forceReload = false } = {}) {
           const reconciledForDb = targetState.messages.filter((m) =>
             messages.some((sm) => (sm.id && sm.id === m.id) || (sm.client_message_id && sm.client_message_id === m.clientMessageId))
           );
-          persistMessagesToDb(reconciledForDb.length > 0 ? reconciledForDb : messages, roomId).catch(() => {});
+          persistMessagesToDb(reconciledForDb.length > 0 ? reconciledForDb : messages, roomId).catch(() => { });
 
           // Render the first page if messages were not yet rendered, so the user sees content immediately.
           // For multi-page history loading, batch intermediate pages in memory to eliminate message flickering,
@@ -4674,7 +4997,7 @@ async function loadMessagesForRoom(roomId, { forceReload = false } = {}) {
                     targetState.mergeServerMessages([norm]);
                   }
                 }
-              } catch {}
+              } catch { }
             }
           }
         }
@@ -4727,20 +5050,45 @@ async function loadMessagesForRoom(roomId, { forceReload = false } = {}) {
       if (incoming.length > 0) {
         for (const inc of incoming) {
           if (inc.id) {
-            window.ollacoreDesktop?.chat?.markDelivered(roomId, inc.id).catch(() => {});
+            window.ollacoreDesktop?.chat?.markDelivered(roomId, inc.id).catch(() => { });
           }
         }
-        if (isAppActiveAndFocused()) {
+        const isVisibleToUser = typeof document === 'undefined' || (!document.hidden && !isMainWindowMinimized && isMainWindowVisible);
+        if (isVisibleToUser) {
           for (const inc of incoming) {
             if (inc.id && inc.status !== 'read' && inc.status !== 'READ') {
               trackAndDispatchReadReceipt(roomId, inc.id);
             }
           }
+          advanceReadCursorForActiveRoom();
         }
       }
     }
   } catch (err) {
     if (activeLoadToken !== token || shellState.selectedRoomId !== roomId) {
+      return;
+    }
+
+    const isForbiddenActiveMember = err?.httpStatus === 403 || String(err?.message || '').toLowerCase().includes('not an active member');
+    if (isForbiddenActiveMember && currentConv) {
+      currentConv.isExited = true;
+      currentConv.exited = true;
+      persistConversationToDb(currentConv).catch(() => { });
+      updateExitedGroupUI(currentConv);
+      targetState.isLoadingInitial = false;
+      targetState.isHistoryLoaded = true;
+      targetState.hasMore = false;
+      messagesLoading?.classList.add('hidden');
+      messagesError?.classList.add('hidden');
+      if (targetState.messages.length === 0) {
+        messagesEmpty?.classList.remove('hidden');
+        messagesScrollArea?.classList.add('hidden');
+      } else {
+        messagesEmpty?.classList.add('hidden');
+        messagesScrollArea?.classList.remove('hidden');
+        renderMessages();
+        renderPinnedBar(roomId);
+      }
       return;
     }
 
@@ -4795,10 +5143,10 @@ export function openExternalUrlSafely(rawUrl) {
   if (window.ollacoreDesktop?.shell?.openExternal) {
     window.ollacoreDesktop.shell.openExternal(targetUrl).catch((err) => {
       console.warn('[openExternalUrlSafely] shell.openExternal failed:', err);
-      try { window.open(targetUrl, '_blank', 'noopener,noreferrer'); } catch (_) {}
+      try { window.open(targetUrl, '_blank', 'noopener,noreferrer'); } catch (_) { }
     });
   } else {
-    try { window.open(targetUrl, '_blank', 'noopener,noreferrer'); } catch (_) {}
+    try { window.open(targetUrl, '_blank', 'noopener,noreferrer'); } catch (_) { }
   }
 }
 
@@ -4871,18 +5219,23 @@ export function resolveSenderNameForMessage(message, roomId = null) {
  * @param {string} roomId
  * @returns {Promise<Array<object>>}
  */
-export async function ensureRoomParticipants(roomId) {
+export async function ensureRoomParticipants(roomId, { force = false } = {}) {
   if (!roomId || !window.ollacoreDesktop?.chatApi?.getParticipants) return [];
   const cleanRoomId = String(roomId).trim();
 
-  // If already in memory with participants, return them
-  const existing = shellState?.getRoomParticipants(cleanRoomId);
-  if (existing && existing.size > 0) {
-    return Array.from(existing.values());
-  }
+  if (force) {
+    shellState?.roomParticipants?.delete(cleanRoomId);
+    inFlightParticipantsRequests.delete(cleanRoomId);
+  } else {
+    // If already in memory with participants, return them
+    const existing = shellState?.getRoomParticipants(cleanRoomId);
+    if (existing && existing.size > 0) {
+      return Array.from(existing.values());
+    }
 
-  if (inFlightParticipantsRequests.has(cleanRoomId)) {
-    return inFlightParticipantsRequests.get(cleanRoomId);
+    if (inFlightParticipantsRequests.has(cleanRoomId)) {
+      return inFlightParticipantsRequests.get(cleanRoomId);
+    }
   }
 
   const fetchPromise = (async () => {
@@ -5083,7 +5436,7 @@ async function fetchAndPopulateReplyPreview(replyToId, roomId, nameSpan, textEl,
           }
           return m;
         });
-        persistMessagesToDb(reconciledForDb, targetRoomId).catch(() => {});
+        persistMessagesToDb(reconciledForDb, targetRoomId).catch(() => { });
 
         found = apiMessages.find((m) =>
           (m.id && String(m.id) === replyKey) ||
@@ -5267,7 +5620,7 @@ async function jumpToOriginalMessage(replyToId, roomId = null) {
           }
           return m;
         });
-        persistMessagesToDb(reconciledForDb, targetRoomId).catch(() => {});
+        persistMessagesToDb(reconciledForDb, targetRoomId).catch(() => { });
         currentRState?.mergeServerMessages(apiMessages);
         renderMessages();
         row = messagesList?.querySelector(`.message-row[data-message-id="${replyKey}"]`)
@@ -5418,7 +5771,7 @@ export async function handleToggleReaction(message, emoji) {
     roomMessagesState.updateReaction(mid, currentUserId, emoji, !isAdd);
     renderMessages();
     if (roomId) {
-      persistReactionToDb(roomId, mid, currentUserId, emoji, !isAdd).catch(() => {});
+      persistReactionToDb(roomId, mid, currentUserId, emoji, !isAdd).catch(() => { });
     }
     if (typeof showUserError === 'function') {
       showUserError('Failed to update reaction.');
@@ -5427,6 +5780,27 @@ export async function handleToggleReaction(message, emoji) {
 }
 
 function createMessageBubbleElement(message) {
+  const isSystem = message?.kind === 'system' || message?.type === 'system';
+  if (isSystem) {
+    const row = document.createElement('div');
+    row.className = 'message-row system-message-row';
+    if (message.id) row.setAttribute('data-message-id', message.id);
+    const cid = message.clientMessageId || message.client_message_id;
+    if (cid) row.setAttribute('data-client-message-id', cid);
+    const seq = message.eventSeq ?? message.event_seq;
+    if (typeof seq === 'number' && Number.isFinite(seq) && seq > 0) row.setAttribute('data-seq', String(seq));
+
+    const pill = document.createElement('div');
+    pill.className = 'system-message-pill';
+    const resolved = resolveMessageContent(message);
+    const text = (resolved?.text) || (message.body && typeof message.body === 'object' && message.body.text)
+      ? (resolved?.text || message.body.text)
+      : (message.text || (typeof message.body === 'string' ? message.body : '') || message.content || '');
+    pill.textContent = text;
+    row.appendChild(pill);
+    return row;
+  }
+
   const currentUserId = roomMessagesState.currentUserId || shellState.currentUser?.userId || shellState.userProfile?.userId;
   const isOwn = isOwnMessage(message, currentUserId);
   const row = document.createElement('div');
@@ -5690,9 +6064,9 @@ function createMessageBubbleElement(message) {
         const { displayName, phone } = resolveCallerIdentity(targetRoom, null);
         const peerName = displayName || (isVideo ? 'Video Call' : 'Voice Call');
         if (isVideo) {
-          voiceCallManager.startVideoCall(targetRoom, peerName, { peerPhone: phone }).catch(() => {});
+          voiceCallManager.startVideoCall(targetRoom, peerName, { peerPhone: phone }).catch(() => { });
         } else {
-          voiceCallManager.startCall(targetRoom, peerName, { peerPhone: phone }).catch(() => {});
+          voiceCallManager.startCall(targetRoom, peerName, { peerPhone: phone }).catch(() => { });
         }
       }
     });
@@ -6163,6 +6537,8 @@ function renderMessages() {
         });
         if (firstUnread) {
           openingState.unreadDividerMessageId = firstUnread.id || firstUnread.clientMessageId || firstUnread.client_message_id;
+        } else {
+          openingState.hasUnreadDivider = false;
         }
       }
       firstUnreadId = openingState.unreadDividerMessageId;
@@ -6624,6 +7000,12 @@ async function loadOlderMessages() {
       return;
     }
 
+    const currentOlderConv = shellState.conversations?.find((c) => (c.roomId || c.room_id || c.id) === roomId);
+    if (currentOlderConv?.isExited || currentOlderConv?.exited) {
+      targetState.hasMore = false;
+      return;
+    }
+
     // 2. If no older messages in SQLite, fetch from OllaCore history API
     const queryBeforeSeq = (typeof beforeSeq === 'number' && beforeSeq > 0) ? beforeSeq : undefined;
     if (window.ollacoreDesktop?.chatApi?.getMessages) {
@@ -6664,7 +7046,7 @@ async function loadOlderMessages() {
           }
           return m;
         });
-        persistMessagesToDb(reconciledForDb, roomId).catch(() => {});
+        persistMessagesToDb(reconciledForDb, roomId).catch(() => { });
       }
       renderMessages();
       if (mediaBrowserPanel && !mediaBrowserPanel.classList.contains('hidden') && activeMbRoomId === roomId) {
@@ -6903,7 +7285,7 @@ function createVoiceNotePlayerElement(resolvedUrl, initialDurationSec = 0, attac
       if (activeVoiceAudio && activeVoiceAudio !== audio) {
         try {
           activeVoiceAudio.pause();
-        } catch {}
+        } catch { }
       }
       activeVoiceAudio = audio;
       audio.play().catch((err) => console.warn('Voice playback failed:', err));
@@ -7280,6 +7662,8 @@ async function handleDownloadFile(attachmentId, filename, knownUrl, targetRoomId
  */
 function toggleAttachmentMenu() {
   if (!attachmentMenuPopover) return;
+  const selectedConv = shellState.getSelectedConversation();
+  if (selectedConv?.isExited || selectedConv?.exited) return;
   const isHidden = attachmentMenuPopover.classList.contains('hidden');
   if (isHidden) {
     emojiPicker?.close();
@@ -7444,11 +7828,12 @@ async function processAndUploadFile({ fileId, filePath, file, filename, byteSize
   });
 
   roomMessagesState.addOptimisticMessage(optimisticMsg);
-  persistMessageToDb(optimisticMsg, targetRoomId).catch(() => {});
+  persistMessageToDb(optimisticMsg, targetRoomId).catch(() => { });
   messagesEmpty?.classList.add('hidden');
   messagesScrollArea?.classList.remove('hidden');
   renderMessages();
   scrollToBottom(true);
+  dismissUnreadDivider(targetRoomId);
   if (mediaBrowserPanel && !mediaBrowserPanel.classList.contains('hidden') && activeMbRoomId === targetRoomId) {
     _populateMbTab(activeMbTab, targetRoomId);
   }
@@ -7520,7 +7905,7 @@ async function processAndUploadFile({ fileId, filePath, file, filename, byteSize
                 attachmentUrls.set(attachmentId, dl.downloadUrl || dl.download_url);
                 break;
               }
-            } catch {}
+            } catch { }
             await new Promise(r => setTimeout(r, 250));
           }
         }
@@ -7599,7 +7984,7 @@ async function processAndUploadFile({ fileId, filePath, file, filename, byteSize
     const wsState = await window.ollacoreDesktop?.chat?.getState();
     if (wsState !== 'connected' || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       roomMessagesState.updateReceipt(clientMessageId, 'pending');
-      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
       if (shellState.selectedRoomId === targetRoomId) {
         updateMessageStatusInDom(clientMessageId, 'pending');
       }
@@ -7611,7 +7996,7 @@ async function processAndUploadFile({ fileId, filePath, file, filename, byteSize
       requestToClient.set(sendRes.requestId, clientMessageId);
     } else {
       roomMessagesState.updateReceipt(clientMessageId, 'pending');
-      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
       if (shellState.selectedRoomId === targetRoomId) {
         updateMessageStatusInDom(clientMessageId, 'pending');
       }
@@ -7620,7 +8005,7 @@ async function processAndUploadFile({ fileId, filePath, file, filename, byteSize
     console.error('Error during media upload/send:', err);
     hideUploadProgress();
     roomMessagesState.updateReceipt(clientMessageId, 'pending');
-    persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+    persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
     if (shellState.selectedRoomId === targetRoomId) {
       updateMessageStatusInDom(clientMessageId, 'pending');
     }
@@ -7654,18 +8039,19 @@ async function processAndUploadVoiceNote({ blob, duration, mimeType }) {
   });
 
   roomMessagesState.addOptimisticMessage(optimisticMsg);
-  persistMessageToDb(optimisticMsg, targetRoomId).catch(() => {});
+  persistMessageToDb(optimisticMsg, targetRoomId).catch(() => { });
   messagesEmpty?.classList.add('hidden');
   messagesScrollArea?.classList.remove('hidden');
   renderMessages();
   scrollToBottom(true);
+  dismissUnreadDivider(targetRoomId);
 
   // 2. Local instant blob preview URL for immediate playback in the optimistic bubble
   try {
     const localUrl = URL.createObjectURL(blob);
     attachmentUrls.set(clientMessageId, localUrl);
     updateMediaPlaceholdersInDom(clientMessageId, localUrl);
-  } catch {}
+  } catch { }
 
   // 3. Update sidebar conversation preview
   const conv = shellState.conversations.find((c) => c.roomId === targetRoomId);
@@ -7677,7 +8063,7 @@ async function processAndUploadVoiceNote({ blob, duration, mimeType }) {
       kind: 'audio'
     };
     renderConversationList();
-    persistConversationToDb(conv).catch(() => {});
+    persistConversationToDb(conv).catch(() => { });
   }
 
   // Store for retry & ACK tracking
@@ -7728,7 +8114,7 @@ async function processAndUploadVoiceNote({ blob, duration, mimeType }) {
               attachmentUrls.set(attachmentId, dl.downloadUrl || dl.download_url);
               break;
             }
-          } catch {}
+          } catch { }
           await new Promise(r => setTimeout(r, 250));
         }
       }
@@ -7802,7 +8188,7 @@ async function processAndUploadVoiceNote({ blob, duration, mimeType }) {
     const wsState = await window.ollacoreDesktop?.chat?.getState();
     if (wsState !== 'connected' || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       roomMessagesState.updateReceipt(clientMessageId, 'pending');
-      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
       if (shellState.selectedRoomId === targetRoomId) {
         updateMessageStatusInDom(clientMessageId, 'pending');
       }
@@ -7814,7 +8200,7 @@ async function processAndUploadVoiceNote({ blob, duration, mimeType }) {
       requestToClient.set(sendRes.requestId, clientMessageId);
     } else {
       roomMessagesState.updateReceipt(clientMessageId, 'pending');
-      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
       if (shellState.selectedRoomId === targetRoomId) {
         updateMessageStatusInDom(clientMessageId, 'pending');
       }
@@ -7822,7 +8208,7 @@ async function processAndUploadVoiceNote({ blob, duration, mimeType }) {
   } catch (err) {
     console.error('Error uploading/sending voice note:', err);
     roomMessagesState.updateReceipt(clientMessageId, 'pending');
-    persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+    persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
     if (shellState.selectedRoomId === targetRoomId) {
       updateMessageStatusInDom(clientMessageId, 'pending');
     }
@@ -7886,6 +8272,12 @@ async function handleSendMessage() {
     return;
   }
   console.log('[CHECKPOINT 3] targetRoomId is valid:', targetRoomId);
+
+  const selectedConv = shellState.getSelectedConversation();
+  if (selectedConv?.isExited || selectedConv?.exited) {
+    console.warn('[handleSendMessage] Cannot send message to an exited group');
+    return;
+  }
 
   if (shellState.isRoomBlocked(targetRoomId)) {
     // Note: shellState.isRoomBlocked(targetRoomId) is tracked.
@@ -8001,7 +8393,7 @@ async function handleSendMessage() {
     if (msgToEdit.id && msgToEdit.id !== canonicalServerMessageId) {
       targetState.updateMessage(msgToEdit.id, updatePayload);
     }
-    persistMessageEditToDb(canonicalServerMessageId, { text: newText }, nowIso).catch(() => {});
+    persistMessageEditToDb(canonicalServerMessageId, { text: newText }, nowIso).catch(() => { });
 
     msgToEdit.id = canonicalServerMessageId;
     msgToEdit.body = { ...(msgToEdit.body || {}), text: newText };
@@ -8034,7 +8426,7 @@ async function handleSendMessage() {
     if (conv && conv.lastMessage) {
       conv.lastMessage.preview = newText;
       renderConversationList();
-      persistConversationToDb(conv).catch(() => {});
+      persistConversationToDb(conv).catch(() => { });
     }
     return;
   }
@@ -8087,7 +8479,7 @@ async function handleSendMessage() {
   if (isOffline) {
     roomMessagesState.updateReceipt(clientMessageId, 'pending');
   }
-  persistMessageToDb(optimisticMsg, targetRoomId).catch(() => {});
+  persistMessageToDb(optimisticMsg, targetRoomId).catch(() => { });
   messagesEmpty?.classList.add('hidden');
   messagesScrollArea?.classList.remove('hidden');
   appendMessageToDom(optimisticMsg);
@@ -8098,6 +8490,7 @@ async function handleSendMessage() {
   console.log('[CHECKPOINT 8] Rendered in conversation DOM, found in DOM:', domRendered);
 
   scrollToBottom(false);
+  dismissUnreadDivider(targetRoomId);
 
   // Clear composer & remove draft for this room
   if (composerInput) {
@@ -8120,7 +8513,7 @@ async function handleSendMessage() {
       kind: 'text'
     };
     renderConversationList();
-    persistConversationToDb(conv).catch(() => {});
+    persistConversationToDb(conv).catch(() => { });
   }
 
   // Store for retry & ACK tracking
@@ -8160,7 +8553,7 @@ async function handleSendMessage() {
       requestToClient.delete(sendRequestId);
       // Disconnected: keep message pending locally, durable in SQLite outbox with clock icon
       roomMessagesState.updateReceipt(clientMessageId, 'pending');
-      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
       if (shellState.selectedRoomId === targetRoomId) {
         updateMessageStatusInDom(clientMessageId, 'pending');
       }
@@ -8178,16 +8571,16 @@ async function handleSendMessage() {
       if (isBlockErr) {
         requestToClient.delete(sendRequestId);
         pendingPayloads.delete(clientMessageId);
-        outboxManager.clear({ clientMessageId }).catch(() => {});
+        outboxManager.clear({ clientMessageId }).catch(() => { });
         roomMessagesState.updateReceipt(clientMessageId, 'sent', targetRoomId);
-        persistMessageStatusToDb(clientMessageId, 'sent').catch(() => {});
+        persistMessageStatusToDb(clientMessageId, 'sent').catch(() => { });
         if (shellState.selectedRoomId === targetRoomId) {
           updateMessageStatusInDom(clientMessageId, 'sent');
         }
       } else {
         requestToClient.delete(sendRequestId);
         roomMessagesState.updateReceipt(clientMessageId, 'pending');
-        persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+        persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
         if (shellState.selectedRoomId === targetRoomId) {
           updateMessageStatusInDom(clientMessageId, 'pending');
         }
@@ -8199,9 +8592,9 @@ async function handleSendMessage() {
       recentUnmatchedAcks.delete(clientMessageId);
       requestToClient.delete(sendRequestId);
       pendingPayloads.delete(clientMessageId);
-      outboxManager.clear({ clientMessageId }).catch(() => {});
+      outboxManager.clear({ clientMessageId }).catch(() => { });
       roomMessagesState.updateReceipt(clientMessageId, 'sent', targetRoomId);
-      persistMessageStatusToDb(clientMessageId, 'sent').catch(() => {});
+      persistMessageStatusToDb(clientMessageId, 'sent').catch(() => { });
       if (shellState.selectedRoomId === targetRoomId) {
         updateMessageStatusInDom(clientMessageId, 'sent');
       }
@@ -8210,7 +8603,7 @@ async function handleSendMessage() {
     requestToClient.delete(sendRequestId);
     console.error('[CHECKPOINT 10 ERROR] Error sending message via WebSocket:', err);
     roomMessagesState.updateReceipt(clientMessageId, 'pending');
-    persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+    persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
     if (shellState.selectedRoomId === targetRoomId) {
       updateMessageStatusInDom(clientMessageId, 'pending');
     }
@@ -8285,9 +8678,9 @@ async function handleRetryMessage(clientMessageId) {
       if (isBlockErr) {
         requestToClient.delete(retryRequestId);
         pendingPayloads.delete(clientMessageId);
-        outboxManager.clear({ clientMessageId }).catch(() => {});
+        outboxManager.clear({ clientMessageId }).catch(() => { });
         roomMessagesState.updateReceipt(clientMessageId, 'sent', targetRoomId);
-        persistMessageStatusToDb(clientMessageId, 'sent').catch(() => {});
+        persistMessageStatusToDb(clientMessageId, 'sent').catch(() => { });
         if (shellState.selectedRoomId === targetRoomId) {
           updateMessageStatusInDom(clientMessageId, 'sent');
         }
@@ -8305,9 +8698,9 @@ async function handleRetryMessage(clientMessageId) {
       recentUnmatchedAcks.delete(clientMessageId);
       requestToClient.delete(retryRequestId);
       pendingPayloads.delete(clientMessageId);
-      outboxManager.clear({ clientMessageId }).catch(() => {});
+      outboxManager.clear({ clientMessageId }).catch(() => { });
       roomMessagesState.updateReceipt(clientMessageId, 'sent', targetRoomId);
-      persistMessageStatusToDb(clientMessageId, 'sent').catch(() => {});
+      persistMessageStatusToDb(clientMessageId, 'sent').catch(() => { });
       if (shellState.selectedRoomId === targetRoomId) {
         updateMessageStatusInDom(clientMessageId, 'sent');
       }
@@ -8322,6 +8715,360 @@ async function handleRetryMessage(clientMessageId) {
   }
 }
 
+let selectedParticipantsRefreshSeq = 0;
+
+const recentSystemEventsMap = new Map();
+
+/**
+ * Resolves a friendly display name for a participant or user ID in a room.
+ * @param {string} userId
+ * @param {string|null} fallbackName
+ * @param {string|null} roomId
+ * @returns {string}
+ */
+export function resolveParticipantName(userId, fallbackName = null, roomId = null) {
+  if (!userId) return fallbackName || 'someone';
+  const currentUserId = shellState.currentUser?.userId || shellState.userProfile?.userId;
+  if (currentUserId && String(userId).toLowerCase().trim() === String(currentUserId).toLowerCase().trim()) {
+    return 'You';
+  }
+  if (fallbackName && !isInternalIdOrUuid(fallbackName)) {
+    return String(fallbackName).trim();
+  }
+  try {
+    const resolved = typeof resolveMemberInfo === 'function' ? resolveMemberInfo(userId) : null;
+    if (resolved?.displayName && !isInternalIdOrUuid(resolved.displayName)) {
+      return resolved.displayName.trim();
+    }
+    if (resolved?.phone) {
+      return resolved.phone.trim();
+    }
+  } catch { }
+
+  if (roomId) {
+    const cachedParts = (shellState?.roomParticipants && shellState.roomParticipants.get(roomId)) ||
+      (typeof activeGroupParticipants !== 'undefined' ? activeGroupParticipants : null);
+    if (Array.isArray(cachedParts)) {
+      const match = cachedParts.find((p) => {
+        const pid = p.principalId || p.principal_id || p.userId || p.user_id;
+        return pid && String(pid).toLowerCase().trim() === String(userId).toLowerCase().trim();
+      });
+      if (match) {
+        if (match.displayName && !isInternalIdOrUuid(match.displayName)) {
+          return match.displayName.trim();
+        }
+        if (match.phone) {
+          return match.phone.trim();
+        }
+      }
+    }
+  }
+  return fallbackName && !isInternalIdOrUuid(fallbackName) ? String(fallbackName).trim() : 'someone';
+}
+
+/**
+ * Creates, deduplicates, persists, and renders a group membership system message.
+ * @param {string} roomId
+ * @param {object} eventData
+ * @returns {object|null} The created system message, or null if deduplicated/ignored
+ */
+export function createAndRecordGroupSystemMessage(roomId, eventData = {}) {
+  if (!roomId || !eventData || typeof eventData !== 'object') return null;
+  const cleanRoomId = String(roomId).trim();
+  const currentUserId = shellState.currentUser?.userId || shellState.userProfile?.userId;
+
+  const action = eventData.action;
+  const actorId = eventData.actorId || null;
+  let actorName = eventData.actorName || null;
+  const targetUserId = eventData.targetUserId || null;
+  const targetUserIds = Array.isArray(eventData.targetUserIds) ? eventData.targetUserIds : null;
+  let targetName = eventData.targetName || null;
+  const role = eventData.role || null;
+  const method = eventData.method || null;
+  const eventId = eventData.eventId || null;
+  const createdAt = eventData.createdAt || new Date().toISOString();
+  const eventSeq = Number(eventData.eventSeq || 0);
+
+  // Strict deduplication:
+  // 1. If explicit eventId matches a recently seen event, ignore
+  const now = Date.now();
+  if (eventId) {
+    const evKey = `ev:${eventId}`;
+    if (recentSystemEventsMap.has(evKey)) {
+      return null;
+    }
+    recentSystemEventsMap.set(evKey, now);
+  }
+
+  // 2. 10-second dedup window for identical cleanRoomId:action:targetUserId(:role)
+  const dedupTarget = targetUserIds ? targetUserIds.slice().sort().join(',') : (targetUserId || '');
+  const semanticKey = `sem:${cleanRoomId}:${action}:${dedupTarget}:${role || ''}`;
+  const lastTime = recentSystemEventsMap.get(semanticKey);
+  if (lastTime && (now - lastTime) < 10000) {
+    return null;
+  }
+  recentSystemEventsMap.set(semanticKey, now);
+
+  // Prune stale entries older than 60s if map grows
+  if (recentSystemEventsMap.size > 200) {
+    for (const [k, v] of recentSystemEventsMap.entries()) {
+      if (now - v > 60000) {
+        recentSystemEventsMap.delete(k);
+      }
+    }
+  }
+
+  // Resolve actor and target names if not provided or UUID-like
+  const resolveUserNameFn = (uid) => resolveParticipantName(uid, null, cleanRoomId);
+  if (!actorName && actorId) {
+    actorName = resolveParticipantName(actorId, null, cleanRoomId);
+  }
+  if (!targetName && targetUserId) {
+    targetName = resolveParticipantName(targetUserId, null, cleanRoomId);
+  }
+
+  const systemText = formatGroupMembershipSystemText({
+    action,
+    actorId,
+    actorName,
+    targetUserId,
+    targetUserIds,
+    targetName,
+    role,
+    method,
+    currentUserId,
+    resolveUserNameFn
+  });
+
+  if (!systemText) {
+    return null;
+  }
+
+  const msgId = eventId || `sys_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  const systemMsg = {
+    id: msgId,
+    roomId: cleanRoomId,
+    room_id: cleanRoomId,
+    senderId: 'system',
+    sender_id: 'system',
+    kind: 'system',
+    type: 'system',
+    status: 'delivered',
+    createdAt,
+    created_at: createdAt,
+    eventSeq,
+    event_seq: eventSeq,
+    body: {
+      text: systemText,
+      system_type: 'group_membership',
+      action,
+      actorId,
+      targetUserId,
+      targetUserIds,
+      role
+    },
+    body_json: JSON.stringify({
+      text: systemText,
+      system_type: 'group_membership',
+      action,
+      actorId,
+      targetUserId,
+      targetUserIds,
+      role
+    })
+  };
+
+  // Add to RoomMessagesState
+  const roomState = getOrCreateRoomMessagesState(cleanRoomId);
+  if (roomState) {
+    roomState.addSystemMessage(systemMsg);
+  }
+
+  // Persist to local SQLite
+  persistMessageToDb(systemMsg, cleanRoomId).catch((err) => {
+    console.warn('[app.js] Failed to persist system message to SQLite:', err?.message || err);
+  });
+
+  // Render to DOM if the affected room is currently active and selected
+  if (shellState.selectedRoomId === cleanRoomId) {
+    messagesEmpty?.classList.add('hidden');
+    messagesLoading?.classList.add('hidden');
+    messagesError?.classList.add('hidden');
+    messagesScrollArea?.classList.remove('hidden');
+
+    const domMessageRows = messagesList ? messagesList.querySelectorAll('.message-row') : [];
+    if (domMessageRows.length === 0 && roomState?.messages?.length > 0) {
+      renderMessages();
+      scrollToBottom(true);
+    } else {
+      const appended = appendMessageToDom(systemMsg);
+      if (!appended || !findMessageDomElement(systemMsg)) {
+        renderMessages();
+      }
+      scrollToBottom(true);
+    }
+  }
+
+  return systemMsg;
+}
+
+/**
+ * Creates, deduplicates, persists, and renders a group description system message.
+ * @param {string} roomId
+ * @param {object} eventData
+ * @returns {object|null} The created system message, or null if deduplicated/ignored
+ */
+export function createAndRecordGroupDescriptionSystemMessage(roomId, eventData = {}) {
+  if (!roomId || !eventData || typeof eventData !== 'object') return null;
+  const cleanRoomId = String(roomId).trim();
+  const currentUserId = shellState.currentUser?.userId || shellState.userProfile?.userId;
+
+  const action = eventData.action || null;
+  const prevDescription = eventData.prevDescription !== undefined ? eventData.prevDescription : undefined;
+  const newDescription = eventData.newDescription !== undefined ? eventData.newDescription : undefined;
+  const actorId = eventData.actorId || null;
+  let actorName = eventData.actorName || null;
+  const eventId = eventData.eventId || null;
+  const createdAt = eventData.createdAt || new Date().toISOString();
+  const eventSeq = Number(eventData.eventSeq || 0);
+
+  // Infer effective action
+  let effectiveAction = action ? String(action).toLowerCase().trim() : null;
+  if (!effectiveAction && (prevDescription !== undefined || newDescription !== undefined)) {
+    const hasPrev = Boolean(prevDescription && typeof prevDescription === 'string' && prevDescription.trim().length > 0);
+    const hasNew = Boolean(newDescription && typeof newDescription === 'string' && newDescription.trim().length > 0);
+    if (!hasPrev && hasNew) {
+      effectiveAction = 'add';
+    } else if (hasPrev && !hasNew) {
+      effectiveAction = 'remove';
+    } else if (hasPrev && hasNew && prevDescription.trim() !== newDescription.trim()) {
+      effectiveAction = 'change';
+    } else {
+      return null;
+    }
+  }
+
+  if (['add', 'added', 'description_add', 'description_added'].includes(effectiveAction)) {
+    effectiveAction = 'add';
+  } else if (['change', 'changed', 'edit', 'edited', 'description_change', 'description_changed', 'description_edit'].includes(effectiveAction)) {
+    effectiveAction = 'change';
+  } else if (['remove', 'removed', 'delete', 'deleted', 'clear', 'cleared', 'description_remove', 'description_removed', 'description_clear'].includes(effectiveAction)) {
+    effectiveAction = 'remove';
+  } else {
+    return null;
+  }
+
+  // Deduplication:
+  // 1. If explicit eventId matches a recently seen event, ignore
+  const now = Date.now();
+  if (eventId) {
+    const evKey = `ev:${eventId}`;
+    if (recentSystemEventsMap.has(evKey)) {
+      return null;
+    }
+    recentSystemEventsMap.set(evKey, now);
+  }
+
+  // 2. 10-second dedup window for identical cleanRoomId:desc:action:newDescription
+  const descKeyPart = (newDescription !== undefined ? String(newDescription).trim() : '').slice(0, 64);
+  const semanticKey = `desc:${cleanRoomId}:${effectiveAction}:${descKeyPart}`;
+  const lastTime = recentSystemEventsMap.get(semanticKey);
+  if (lastTime && (now - lastTime) < 10000) {
+    return null;
+  }
+  recentSystemEventsMap.set(semanticKey, now);
+
+  // Prune stale entries older than 60s
+  if (recentSystemEventsMap.size > 200) {
+    for (const [k, v] of recentSystemEventsMap.entries()) {
+      if (now - v > 60000) {
+        recentSystemEventsMap.delete(k);
+      }
+    }
+  }
+
+  // Resolve actor name
+  const resolveUserNameFn = (uid) => resolveParticipantName(uid, null, cleanRoomId);
+  if (!actorName && actorId) {
+    actorName = resolveParticipantName(actorId, null, cleanRoomId);
+  }
+
+  const systemText = formatGroupDescriptionSystemText({
+    action: effectiveAction,
+    actorId,
+    actorName,
+    currentUserId,
+    resolveUserNameFn
+  });
+
+  if (!systemText) {
+    return null;
+  }
+
+  const msgId = eventId || `sys_desc_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  const systemMsg = {
+    id: msgId,
+    roomId: cleanRoomId,
+    room_id: cleanRoomId,
+    senderId: 'system',
+    sender_id: 'system',
+    kind: 'system',
+    type: 'system',
+    status: 'delivered',
+    createdAt,
+    created_at: createdAt,
+    eventSeq,
+    event_seq: eventSeq,
+    body: {
+      text: systemText,
+      system_type: 'group_description',
+      action: effectiveAction,
+      actorId,
+      actorName
+    },
+    body_json: JSON.stringify({
+      text: systemText,
+      system_type: 'group_description',
+      action: effectiveAction,
+      actorId,
+      actorName
+    })
+  };
+
+  // Add to RoomMessagesState
+  const roomState = getOrCreateRoomMessagesState(cleanRoomId);
+  if (roomState) {
+    roomState.addSystemMessage(systemMsg);
+  }
+
+  // Persist to local SQLite
+  persistMessageToDb(systemMsg, cleanRoomId).catch((err) => {
+    console.warn('[app.js] Failed to persist group description system message to SQLite:', err?.message || err);
+  });
+
+  // Render to DOM if the affected room is currently active and selected
+  if (shellState.selectedRoomId === cleanRoomId) {
+    messagesEmpty?.classList.add('hidden');
+    messagesLoading?.classList.add('hidden');
+    messagesError?.classList.add('hidden');
+    messagesScrollArea?.classList.remove('hidden');
+
+    const domMessageRows = messagesList ? messagesList.querySelectorAll('.message-row') : [];
+    if (domMessageRows.length === 0 && roomState?.messages?.length > 0) {
+      renderMessages();
+      scrollToBottom(true);
+    } else {
+      const appended = appendMessageToDom(systemMsg);
+      if (!appended || !findMessageDomElement(systemMsg)) {
+        renderMessages();
+      }
+      scrollToBottom(true);
+    }
+  }
+
+  return systemMsg;
+}
+
 /**
  * Handles incoming real-time WebSocket frames.
  * Updates message state and DOM when active room matches.
@@ -8332,6 +9079,20 @@ export function handleRealtimeChatEvent(frame) {
   if (!frame || typeof frame !== 'object') return;
   const { type, room_id, payload } = frame;
   const eventRoomId = room_id || frame.roomId || frame.room_id || payload?.room_id || payload?.roomId;
+  const logIncomingInviteDecision = ({ source, decision, reason, isSelfMatch = false, hasSenderIdentity = false, hasTargetIdentity = false, targetMatches = null, modality = null, epoch = null }) => {
+    console.info('[VoiceCall] INCOMING_INVITE', {
+      stage: 'renderer_incoming_invite',
+      source,
+      decision,
+      reason,
+      modality,
+      epoch,
+      hasSenderIdentity,
+      isSelfMatch,
+      hasTargetIdentity,
+      targetMatches
+    });
+  };
   const reqId = frame.request_id || frame.requestId || payload?.request_id;
   const isSameRoom = (a, b) => Boolean(a && b && String(a).toLowerCase().trim() === String(b).toLowerCase().trim());
   const isActiveRoom = isSameRoom(eventRoomId, shellState?.selectedRoomId) || (eventRoomId === shellState?.selectedRoomId);
@@ -8354,7 +9115,7 @@ export function handleRealtimeChatEvent(frame) {
       if (clientMsgId) {
         if (reqId) requestToClient.delete(reqId);
         pendingPayloads.delete(clientMsgId);
-        outboxManager.clear({ clientMessageId: clientMsgId }).catch(() => {});
+        outboxManager.clear({ clientMessageId: clientMsgId }).catch(() => { });
         const targetRoomId = eventRoomId || shellState.selectedRoomId;
         const targetState = getOrCreateRoomMessagesState(targetRoomId);
 
@@ -8371,13 +9132,13 @@ export function handleRealtimeChatEvent(frame) {
           // Block rejection under WhatsApp privacy model: server accepted/withheld delivery.
           // Display single tick 'sent', clear from outbox, do NOT show retry button or leak block error.
           targetState?.updateReceipt(clientMsgId, 'sent', targetRoomId);
-          persistMessageStatusToDb(clientMsgId, 'sent').catch(() => {});
+          persistMessageStatusToDb(clientMsgId, 'sent').catch(() => { });
           if (targetRoomId === shellState.selectedRoomId) {
             updateMessageStatusInDom(clientMsgId, 'sent');
           }
         } else {
           targetState?.updateReceipt(clientMsgId, 'failed', targetRoomId);
-          persistMessageStatusToDb(clientMsgId, 'failed').catch(() => {});
+          persistMessageStatusToDb(clientMsgId, 'failed').catch(() => { });
           if (targetRoomId === shellState.selectedRoomId) {
             updateMessageStatusInDom(clientMsgId, 'failed');
           }
@@ -8395,7 +9156,7 @@ export function handleRealtimeChatEvent(frame) {
       if (reqId) requestToClient.delete(reqId);
       const pending = pendingPayloads.get(clientMsgId);
       pendingPayloads.delete(clientMsgId);
-      outboxManager.clear({ clientMessageId: clientMsgId }).catch(() => {});
+      outboxManager.clear({ clientMessageId: clientMsgId }).catch(() => { });
 
       const targetRoomId = pending?.roomId || eventRoomId || shellState.selectedRoomId;
       const targetState = getOrCreateRoomMessagesState(targetRoomId);
@@ -8487,15 +9248,15 @@ export function handleRealtimeChatEvent(frame) {
             const liveRank = (serverMsgId ? targetState.getStatus(serverMsgId) : null) || targetState.getStatus(clientMsgId);
             if (!liveRank || (STATUS_RANKS[liveRank] ?? -99) < 1) {
               if (serverMsgId) {
-                persistMessageStatusToDb(serverMsgId, 'sent').catch(() => {});
+                persistMessageStatusToDb(serverMsgId, 'sent').catch(() => { });
               }
-              persistMessageStatusToDb(clientMsgId, 'sent').catch(() => {});
+              persistMessageStatusToDb(clientMsgId, 'sent').catch(() => { });
             }
-          }).catch(() => {});
+          }).catch(() => { });
         } else {
-          persistMessageStatusToDb(clientMsgId, 'sent').catch(() => {});
+          persistMessageStatusToDb(clientMsgId, 'sent').catch(() => { });
           if (serverMsgId) {
-            persistMessageStatusToDb(serverMsgId, 'sent').catch(() => {});
+            persistMessageStatusToDb(serverMsgId, 'sent').catch(() => { });
           }
         }
       }
@@ -8535,10 +9296,10 @@ export function handleRealtimeChatEvent(frame) {
 
       if (isBlockError) {
         // Block-related error frame: do not show retry button, clear from outbox, display single tick
-        outboxManager.clear({ clientMessageId: clientMsgId }).catch(() => {});
+        outboxManager.clear({ clientMessageId: clientMsgId }).catch(() => { });
         if (targetState) {
           targetState.updateReceipt(clientMsgId, 'sent', targetRoomId);
-          persistMessageStatusToDb(clientMsgId, 'sent').catch(() => {});
+          persistMessageStatusToDb(clientMsgId, 'sent').catch(() => { });
         }
         if (targetRoomId && targetRoomId === shellState.selectedRoomId) {
           updateMessageStatusInDom(clientMsgId, 'sent');
@@ -8546,7 +9307,7 @@ export function handleRealtimeChatEvent(frame) {
       } else {
         if (targetState) {
           targetState.updateReceipt(clientMsgId, 'failed', targetRoomId);
-          persistMessageStatusToDb(clientMsgId, 'failed').catch(() => {});
+          persistMessageStatusToDb(clientMsgId, 'failed').catch(() => { });
         }
         if (targetRoomId && targetRoomId === shellState.selectedRoomId) {
           updateMessageStatusInDom(clientMsgId, 'failed');
@@ -8650,6 +9411,9 @@ export function handleRealtimeChatEvent(frame) {
       const sig = body?.call_signal || (body?.call_type ? 'invite' : null);
       const isVideo = Boolean(body?.is_video === true || body?.call_type === 'video');
       const callType = isVideo ? 'video' : 'voice';
+      const signalCallId = body?.call_id ?? body?.callId ?? p.call_id ?? p.callId ?? null;
+      const signalCallEpoch = body?.call_epoch ?? body?.callEpoch ?? p.call_epoch ?? p.callEpoch ?? frame.call_epoch ?? frame.callEpoch;
+      const signalTimestamp = body?.created_at ?? body?.createdAt ?? p.created_at ?? p.createdAt ?? frame.created_at ?? frame.createdAt ?? frame.timestamp;
       const msgId = p.id || p.message_id;
       const senderId = p.sender_id || p.senderId || p.from || frame.sender_id || frame.senderId || '';
       const targetUserId = body?.target_user_id || body?.targetUserId || p.target_user_id || p.targetUserId || null;
@@ -8658,27 +9422,39 @@ export function handleRealtimeChatEvent(frame) {
       const currentUserId = shellState.currentUser?.userId || shellState.currentUser?.user_id || shellState.userProfile?.userId || shellState.userProfile?.user_id || '';
       const activeUserId = activeRoomMessagesState.currentUserId || currentUserId;
       const isCallerInRoom = (voiceCallManager.roomId === eventRoomId && (voiceCallManager.isOutgoing || voiceCallManager.state === CALL_STATE.OUTGOING_RINGING || voiceCallManager.state === CALL_STATE.CONNECTING || voiceCallManager.state === CALL_STATE.CONNECTED));
-      const isRecentlyInitiated = recentlyInitiatedCalls.has(eventRoomId) && (Date.now() - recentlyInitiatedCalls.get(eventRoomId) < 60000);
       const isSelfSender = Boolean(
         (senderId && activeUserId && (String(senderId).toLowerCase().trim() === String(activeUserId).toLowerCase().trim() || isParticipantSelf({ principalId: senderId }, activeUserId))) ||
         (senderId && currentUserId && String(senderId).toLowerCase().trim() === String(currentUserId).toLowerCase().trim())
       );
+      const isCallActive = (voiceCallManager.state !== CALL_STATE.IDLE && !voiceCallManager.isEnded);
+      const isRecentlyInitiated = recentlyInitiatedCalls.has(eventRoomId) &&
+        (Date.now() - recentlyInitiatedCalls.get(eventRoomId) < 60000) &&
+        (isCallActive || isSelfSender || !senderId);
 
       if (isSelfSender) {
+        logIncomingInviteDecision({ source: 'message.created', decision: 'suppressed', reason: 'self_sender', isSelfMatch: true, hasSenderIdentity: Boolean(senderId), hasTargetIdentity: Boolean(targetUserId), modality: callType, epoch: signalCallEpoch ?? null });
         return;
       }
 
       if (sig === 'invite') {
         if (isCallerInRoom || isRecentlyInitiated) {
+          logIncomingInviteDecision({ source: 'message.created', decision: 'suppressed', reason: isCallerInRoom ? 'local_call_active' : 'recent_local_call', hasSenderIdentity: Boolean(senderId), hasTargetIdentity: Boolean(targetUserId), modality: callType, epoch: signalCallEpoch ?? null });
           return;
         }
         // If the invite is targeted to a specific user, ensure it is meant for current user
         if (targetUserId && currentUserId && String(targetUserId).toLowerCase().trim() !== String(currentUserId).toLowerCase().trim()) {
           // Targeted to another member; ignore
+          logIncomingInviteDecision({ source: 'message.created', decision: 'suppressed', reason: 'target_mismatch', hasSenderIdentity: Boolean(senderId), hasTargetIdentity: true, targetMatches: false, modality: callType, epoch: signalCallEpoch ?? null });
           return;
         }
 
         if (voiceCallManager.roomId === eventRoomId && voiceCallManager.state === CALL_STATE.INCOMING_RINGING) {
+          if (signalCallId) {
+            voiceCallManager.adoptAuthoritativeCallId(signalCallId, {
+              roomId: eventRoomId,
+              signalingEpoch: signalCallEpoch
+            });
+          }
           voiceCallManager.setModality(isVideo ? 'video' : 'voice');
           if (isVideo) {
             const { displayName } = resolveCallerIdentity(eventRoomId, senderId);
@@ -8689,6 +9465,7 @@ export function handleRealtimeChatEvent(frame) {
             });
           }
           updateVoiceCallUi(voiceCallManager.state, voiceCallManager.peerName, voiceCallManager.error);
+          logIncomingInviteDecision({ source: 'message.created', decision: 'merged', reason: 'existing_incoming_ringing', hasSenderIdentity: Boolean(senderId), hasTargetIdentity: Boolean(targetUserId), targetMatches: targetUserId ? true : null, modality: callType, epoch: signalCallEpoch ?? null });
         } else if (voiceCallManager.state === CALL_STATE.IDLE || voiceCallManager.isEnded) {
           // Callee receives targeted invite to an ongoing call:
           // Trigger incoming call ringing experience
@@ -8699,10 +9476,11 @@ export function handleRealtimeChatEvent(frame) {
             body: `${displayName || 'Someone'} is calling you...`,
             roomId: eventRoomId
           });
-          window.ollacoreDesktop?.floatingCall?.show?.().catch(() => {});
+          window.ollacoreDesktop?.floatingCall?.show?.().catch(() => { });
           voiceCallManager.handleIncomingCall({
             roomId: eventRoomId,
-            callId: eventRoomId,
+            callId: signalCallId,
+            callEpoch: signalCallEpoch,
             initiator: senderId || '',
             isVideo,
             callType,
@@ -8712,12 +9490,18 @@ export function handleRealtimeChatEvent(frame) {
             peerPhone: phone
           });
           syncFloatingCallState();
+          logIncomingInviteDecision({ source: 'message.created', decision: 'presented', reason: 'genuine_remote_invite', hasSenderIdentity: Boolean(senderId), hasTargetIdentity: Boolean(targetUserId), targetMatches: targetUserId ? true : null, modality: callType, epoch: signalCallEpoch ?? null });
         } else {
           pendingRoomModalities.set(eventRoomId, { isVideo, callType, timestamp: Date.now() });
+          logIncomingInviteDecision({ source: 'message.created', decision: 'suppressed', reason: 'other_call_active', hasSenderIdentity: Boolean(senderId), hasTargetIdentity: Boolean(targetUserId), modality: callType, epoch: signalCallEpoch ?? null });
         }
       } else if (sig === 'accept') {
         if (voiceCallManager.roomId === eventRoomId && (voiceCallManager.state === CALL_STATE.OUTGOING_RINGING || voiceCallManager.state === CALL_STATE.CONNECTING)) {
-          voiceCallManager.handleCallAccepted?.({ roomId: eventRoomId });
+          voiceCallManager.handleCallAccepted?.({
+            roomId: eventRoomId,
+            callId: signalCallId,
+            callEpoch: signalCallEpoch
+          });
           updateVoiceCallUi(voiceCallManager.state, voiceCallManager.peerName, voiceCallManager.error);
           syncFloatingCallState();
           if (voiceCallManager.isVideo) {
@@ -8733,19 +9517,38 @@ export function handleRealtimeChatEvent(frame) {
             if (senderId && callStatusLabel) {
               const { displayName } = resolveCallerIdentity(eventRoomId, senderId);
               callStatusLabel.textContent = `${displayName || 'Participant'} declined`;
-              setTimeout(() => {
+              scheduleCallPresentation(voiceCallManager, () => {
                 if (voiceCallManager.state === CALL_STATE.CONNECTED && callStatusLabel) {
                   callStatusLabel.textContent = 'Connected';
                 }
               }, 3000);
             }
           } else {
-            voiceCallManager.handleRemoteCallEnded({ roomId: eventRoomId });
+            voiceCallManager.handleRemoteCallEnded({
+              roomId: eventRoomId,
+              callId: signalCallId,
+              callEpoch: signalCallEpoch,
+              eventTimestamp: signalTimestamp
+            });
           }
         }
       } else if (sig === 'cancel') {
         if (voiceCallManager.roomId === eventRoomId && voiceCallManager.state === CALL_STATE.INCOMING_RINGING) {
-          voiceCallManager.handleRemoteCallEnded({ roomId: eventRoomId });
+          voiceCallManager.handleRemoteCallEnded({
+            roomId: eventRoomId,
+            callId: signalCallId,
+            callEpoch: signalCallEpoch,
+            eventTimestamp: signalTimestamp
+          });
+        }
+      } else if (sig === 'hangup' || sig === 'end') {
+        if (voiceCallManager.roomId === eventRoomId) {
+          voiceCallManager.handleRemoteCallEnded({
+            roomId: eventRoomId,
+            callId: signalCallId,
+            callEpoch: signalCallEpoch,
+            eventTimestamp: signalTimestamp
+          });
         }
       }
 
@@ -8796,6 +9599,7 @@ export function handleRealtimeChatEvent(frame) {
         } else if (isActiveRoom || isCurrentlyViewed) {
           // Incoming message for currently open conversation: keep read
           shellState.markConversationAsRead(eventRoomId);
+          advanceReadCursorForActiveRoom();
         } else {
           // Incoming message while away or inactive: record unread with deduplication
           const prevUnread = item.unreadCount;
@@ -8880,7 +9684,7 @@ export function handleRealtimeChatEvent(frame) {
       if (currentNavigationDestination === 'archived') {
         renderArchivedList();
       }
-      persistConversationToDb(item).catch(() => {});
+      persistConversationToDb(item).catch(() => { });
     }
   }
 
@@ -8888,6 +9692,7 @@ export function handleRealtimeChatEvent(frame) {
   if (type === 'call.started') {
     const p = payload || {};
     const callId = p.call_id || p.callId || frame.call_id || frame.callId || '';
+    const callEpoch = p.call_epoch ?? p.callEpoch ?? frame.call_epoch ?? frame.callEpoch;
     const initiator = p.initiator || frame.initiator || '';
     const pendingModality = pendingRoomModalities.get(eventRoomId);
     if (pendingModality) {
@@ -8913,19 +9718,27 @@ export function handleRealtimeChatEvent(frame) {
     const currentUserId = shellState.currentUser?.userId || shellState.userProfile?.userId;
     const activeUserId = activeRoomMessagesState.currentUserId || currentUserId;
     const isCallerInRoom = (voiceCallManager.roomId === eventRoomId && (voiceCallManager.isOutgoing || voiceCallManager.state === CALL_STATE.OUTGOING_RINGING || voiceCallManager.state === CALL_STATE.CONNECTING || voiceCallManager.state === CALL_STATE.CONNECTED));
-    const isRecentlyInitiated = recentlyInitiatedCalls.has(eventRoomId) && (Date.now() - recentlyInitiatedCalls.get(eventRoomId) < 60000);
     const isSelfInitiator = Boolean(
       (initiator && activeUserId && (String(initiator).toLowerCase().trim() === String(activeUserId).toLowerCase().trim() || isParticipantSelf({ principalId: initiator }, activeUserId))) ||
       (initiator && currentUserId && String(initiator).toLowerCase().trim() === String(currentUserId).toLowerCase().trim())
     );
+    const isCallActive = (voiceCallManager.state !== CALL_STATE.IDLE && !voiceCallManager.isEnded);
+    const isRecentlyInitiated = recentlyInitiatedCalls.has(eventRoomId) &&
+      (Date.now() - recentlyInitiatedCalls.get(eventRoomId) < 60000) &&
+      (isCallActive || isSelfInitiator || !initiator);
 
     const isLocalCaller = isSelfInitiator || isCallerInRoom || isRecentlyInitiated;
 
+    if (callId && voiceCallManager.roomId === eventRoomId && voiceCallManager.state !== CALL_STATE.IDLE) {
+      voiceCallManager.adoptAuthoritativeCallId(callId, {
+        roomId: eventRoomId,
+        signalingEpoch: callEpoch
+      });
+    }
+
     if (isLocalCaller) {
       // Local client initiated this call (outgoing). Suppress incoming notification and preserve outgoing state.
-      if (callId && voiceCallManager.roomId === eventRoomId && !voiceCallManager.callId) {
-        voiceCallManager.callId = callId;
-      }
+      logIncomingInviteDecision({ source: 'call.started', decision: 'suppressed', reason: isSelfInitiator ? 'self_initiator' : (isCallerInRoom ? 'local_call_active' : 'recent_local_call'), isSelfMatch: isSelfInitiator, hasSenderIdentity: Boolean(initiator), modality: callType, epoch: callEpoch ?? null });
       return;
     }
 
@@ -8937,10 +9750,11 @@ export function handleRealtimeChatEvent(frame) {
       body: `${displayName || 'Someone'} is calling you...`,
       roomId: eventRoomId
     });
-    window.ollacoreDesktop?.floatingCall?.show?.().catch(() => {});
+    window.ollacoreDesktop?.floatingCall?.show?.().catch(() => { });
     voiceCallManager.handleIncomingCall({
       roomId: eventRoomId,
       callId,
+      callEpoch,
       initiator,
       isVideo,
       callType,
@@ -8950,11 +9764,21 @@ export function handleRealtimeChatEvent(frame) {
       peerPhone: phone
     });
     syncFloatingCallState();
+    logIncomingInviteDecision({ source: 'call.started', decision: 'presented', reason: 'genuine_remote_invite', hasSenderIdentity: Boolean(initiator), modality: callType, epoch: callEpoch ?? null });
     return;
   }
 
   if (type === 'call.ended' || type === 'call_ended' || type === 'call.cancelled' || type === 'call.rejected' || type === 'call.participant_left' || type === 'call.peer_left' || type === 'call.left') {
-    voiceCallManager.handleRemoteCallEnded({ roomId: eventRoomId });
+    const p = payload || {};
+    const callId = p.call_id ?? p.callId ?? frame.call_id ?? frame.callId ?? null;
+    const callEpoch = p.call_epoch ?? p.callEpoch ?? frame.call_epoch ?? frame.callEpoch;
+    const eventTimestamp = p.created_at ?? p.createdAt ?? frame.created_at ?? frame.createdAt ?? frame.timestamp;
+    voiceCallManager.handleRemoteCallEnded({
+      roomId: eventRoomId,
+      callId,
+      callEpoch,
+      eventTimestamp
+    });
     return;
   }
 
@@ -8965,7 +9789,7 @@ export function handleRealtimeChatEvent(frame) {
     const msgId = payload.id || payload.message_id;
     if (!isOwn && eventRoomId && msgId) {
       // 1. Deliver acknowledgement: whenever incoming message is received by Windows client
-      window.ollacoreDesktop?.chat?.markDelivered(eventRoomId, msgId).catch(() => {});
+      window.ollacoreDesktop?.chat?.markDelivered(eventRoomId, msgId).catch(() => { });
 
       // 2. Read acknowledgement: only when displayed/read in the currently active conversation and window is visible and focused
       if (eventRoomId === shellState.selectedRoomId && isAppActiveAndFocused()) {
@@ -9072,7 +9896,7 @@ export function handleRealtimeChatEvent(frame) {
         if (effectiveSeq) {
           targetState.setPeerLastReadSeq(effectiveSeq);
           if (window?.ollacoreDesktop?.db?.setMetadata && targetRoom) {
-            window.ollacoreDesktop.db.setMetadata('peer_read_seq:' + targetRoom, String(effectiveSeq)).catch(() => {});
+            window.ollacoreDesktop.db.setMetadata('peer_read_seq:' + targetRoom, String(effectiveSeq)).catch(() => { });
           }
         }
         if (targetRoom && targetRoom === shellState.selectedRoomId) {
@@ -9174,7 +9998,7 @@ export function handleRealtimeChatEvent(frame) {
                 });
               }
             }
-          }).catch(() => {});
+          }).catch(() => { });
         }
       }
 
@@ -9184,7 +10008,7 @@ export function handleRealtimeChatEvent(frame) {
           const senderUid = msg.senderId || msg.sender_id;
           const pMap = shellState.getRoomParticipants(eventRoomId);
           if (senderUid && !pMap.has(senderUid) && !pMap.has(senderUid.toLowerCase())) {
-            ensureRoomParticipants(eventRoomId).catch(() => {});
+            ensureRoomParticipants(eventRoomId).catch(() => { });
           }
         }
 
@@ -9240,7 +10064,7 @@ export function handleRealtimeChatEvent(frame) {
       const msgId = payload?.id || payload?.message_id || frame?.message_id || frame?.id;
       if (msgId) {
         const updated = targetState.updateMessage(msgId, payload);
-        persistMessageEditToDb(msgId, payload.body || payload, payload.editedAt || payload.edited_at).catch(() => {});
+        persistMessageEditToDb(msgId, payload.body || payload, payload.editedAt || payload.edited_at).catch(() => { });
         if (isActiveRoom && updated) {
           const el = findMessageDomElement(msgId);
           if (el) {
@@ -9254,7 +10078,7 @@ export function handleRealtimeChatEvent(frame) {
           const resolved = resolveMessageContent(payload);
           conv.lastMessage.preview = resolved.text || resolved.fallbackText || conv.lastMessage.preview;
           renderConversationList();
-          persistConversationToDb(conv).catch(() => {});
+          persistConversationToDb(conv).catch(() => { });
         }
       }
       break;
@@ -9264,7 +10088,7 @@ export function handleRealtimeChatEvent(frame) {
       const msgId = payload?.id || payload?.message_id || frame?.message_id || frame?.id;
       if (msgId) {
         const deleted = targetState.deleteMessage(msgId);
-        persistMessageDeletedToDb(msgId).catch(() => {});
+        persistMessageDeletedToDb(msgId).catch(() => { });
         if (isActiveRoom && deleted) {
           removeMessageElementFromDom(msgId);
           if (mediaBrowserPanel && !mediaBrowserPanel.classList.contains('hidden') && activeMbRoomId === eventRoomId) {
@@ -9284,7 +10108,7 @@ export function handleRealtimeChatEvent(frame) {
         const conv = shellState.conversations.find((c) => c.roomId === eventRoomId);
         if (conv && conv.lastMessage) {
           conv.lastMessage.preview = 'This message was deleted';
-          persistConversationToDb(conv).catch(() => {});
+          persistConversationToDb(conv).catch(() => { });
         }
         renderConversationList();
         updateChatFilterCounts();
@@ -9301,7 +10125,7 @@ export function handleRealtimeChatEvent(frame) {
       const reactingUserId = payload?.user_id || payload?.userId || payload?.principal_id;
       if (msgId && emoji && reactingUserId) {
         targetState.updateReaction(msgId, reactingUserId, emoji, true);
-        persistReactionToDb(eventRoomId, msgId, reactingUserId, emoji, true).catch(() => {});
+        persistReactionToDb(eventRoomId, msgId, reactingUserId, emoji, true).catch(() => { });
         if (isActiveRoom) {
           const el = findMessageDomElement(msgId);
           const fullMsg = targetState.messages?.find((m) => m.id === msgId || m.clientMessageId === msgId);
@@ -9321,7 +10145,7 @@ export function handleRealtimeChatEvent(frame) {
       const reactingUserId = payload?.user_id || payload?.userId || payload?.principal_id;
       if (msgId && emoji && reactingUserId) {
         targetState.updateReaction(msgId, reactingUserId, emoji, false);
-        persistReactionToDb(eventRoomId, msgId, reactingUserId, emoji, false).catch(() => {});
+        persistReactionToDb(eventRoomId, msgId, reactingUserId, emoji, false).catch(() => { });
         if (isActiveRoom) {
           const el = findMessageDomElement(msgId);
           const fullMsg = targetState.messages?.find((m) => m.id === msgId || m.clientMessageId === msgId);
@@ -9343,13 +10167,86 @@ export function handleRealtimeChatEvent(frame) {
     }
 
     case 'member.added':
+    case 'member.updated':
     case 'member.removed': {
-      shellState.roomParticipants?.delete(String(eventRoomId).trim());
-      if (shellState.selectedRoomId === eventRoomId) {
-        ensureRoomParticipants(eventRoomId).catch(() => {});
+      const cleanRoomId = String(eventRoomId || '').trim();
+      if (!cleanRoomId) break;
+
+      // Extract and record WhatsApp-style group system message for membership events
+      const actorId = frame.actorId || payload?.actorId || payload?.actor_id || frame.actor_id || null;
+      const targetUserId = frame.userId || payload?.userId || payload?.user_id || payload?.principalId || payload?.principal_id || frame.principalId || null;
+      const targetName = payload?.displayName || payload?.display_name || payload?.name || payload?.member?.displayName || null;
+      const actorName = payload?.actorName || payload?.actor_name || null;
+      const method = frame.method || payload?.method || null;
+      const actionPayload = frame.action || payload?.action || null;
+      const role = frame.role || payload?.role || payload?.newRole || payload?.new_role || payload?.member?.role || null;
+      const eventId = frame.eventId || payload?.eventId || frame.id || payload?.id || null;
+      const createdAt = frame.createdAt || payload?.createdAt || payload?.created_at || frame.created_at || null;
+      const eventSeq = frame.eventSeq || frame.event_seq || payload?.eventSeq || payload?.event_seq || 0;
+
+      let eventAction = 'add';
+      if (type === 'member.added') {
+        const isLinkJoin = method === 'link' || method === 'group_link' || method === 'invite_link' || actionPayload === 'join_link';
+        eventAction = isLinkJoin ? 'join_link' : 'add';
+      } else if (type === 'member.removed') {
+        const isVoluntaryLeave = actionPayload === 'leave' ||
+          payload?.reason === 'left' ||
+          (actorId && targetUserId && String(actorId).trim() === String(targetUserId).trim());
+        eventAction = isVoluntaryLeave ? 'leave' : 'remove';
+      } else if (type === 'member.updated') {
+        eventAction = 'role_update';
       }
-      if (activeGroupInfoRoomId && activeGroupInfoRoomId === eventRoomId) {
+
+      createAndRecordGroupSystemMessage(cleanRoomId, {
+        action: eventAction,
+        actorId,
+        actorName,
+        targetUserId,
+        targetName,
+        role,
+        method,
+        eventId,
+        createdAt,
+        eventSeq
+      });
+
+      // Invalidate cached participants for the affected room
+      if (shellState?.roomParticipants) {
+        shellState.roomParticipants.delete(cleanRoomId);
+      }
+      inFlightParticipantsRequests.delete(cleanRoomId);
+
+      // Refresh Contact Info side panel if open for this room
+      if (activeContactInfoRoomId && activeContactInfoRoomId === cleanRoomId) {
+        refreshContactInfoParticipants(activeContactInfoRoomId);
+      }
+
+      // Refresh Group Info modal if open for this room
+      if (activeGroupInfoRoomId && activeGroupInfoRoomId === cleanRoomId) {
         refreshGroupParticipants(activeGroupInfoRoomId);
+      }
+
+      // If this room is currently open/selected, refresh participants and update capabilities in real-time
+      if (shellState?.selectedRoomId === cleanRoomId) {
+        const seq = ++selectedParticipantsRefreshSeq;
+        ensureRoomParticipants(cleanRoomId, { force: true }).then((parts) => {
+          if (shellState.selectedRoomId !== cleanRoomId || seq !== selectedParticipantsRefreshSeq) return;
+          const conv = shellState.conversations?.find((c) => c.roomId === cleanRoomId);
+          const currentUserId = shellState.currentUser?.userId || shellState.userProfile?.userId;
+          const participantsList = Array.isArray(parts) ? parts : [];
+          if (conv) {
+            conv.participants = participantsList;
+            conv.participantCount = participantsList.length;
+            const selfPart = participantsList.find((p) => isParticipantSelf(p, currentUserId));
+            if (selfPart?.role) {
+              conv.my_role = selfPart.role;
+              conv.myRole = selfPart.role;
+            }
+          }
+          const caps = getGroupCapabilities(conv, participantsList, currentUserId);
+          isCurrentUserAdmin = caps.isAdmin;
+          updateRenderedGroupSenderNames(cleanRoomId);
+        }).catch(() => { });
       }
       break;
     }
@@ -9358,6 +10255,9 @@ export function handleRealtimeChatEvent(frame) {
     case 'group.updated': {
       const conv = shellState.conversations?.find((c) => c.roomId === eventRoomId);
       const newName = payload?.name || frame?.name;
+      const newDescription = payload?.description !== undefined ? payload.description : (frame?.description !== undefined ? frame.description : undefined);
+      const newIconUrl = payload?.icon_url ?? payload?.iconUrl ?? frame?.icon_url ?? frame?.iconUrl;
+
       if (conv && newName) {
         conv.name = newName;
         if (eventRoomId === shellState.selectedRoomId && selectedChatName) {
@@ -9378,6 +10278,63 @@ export function handleRealtimeChatEvent(frame) {
             groupInfoAvatar.style.backgroundColor = color;
           }
         }
+        renderConversationList();
+      }
+
+      if (conv && newDescription !== undefined) {
+        const prevDescription = payload?.previous_description ?? payload?.prev_description ?? frame?.previous_description ?? frame?.prev_description ?? conv.description ?? conv.about ?? '';
+        if (String(newDescription || '').trim() !== String(prevDescription || '').trim()) {
+          let actorId = payload?.actor_id || payload?.actorId || frame?.actor_id || frame?.actorId ||
+            payload?.user_id || payload?.userId || frame?.user_id || frame?.userId ||
+            payload?.principal_id || frame?.principal_id ||
+            conv.ownerId || conv.owner_id || conv.creatorId || conv.creator_id || null;
+          if (!actorId && Array.isArray(conv.participants)) {
+            const ownerPart = conv.participants.find((p) => isParticipantOwner(p));
+            if (ownerPart) {
+              actorId = ownerPart.userId || ownerPart.user_id || ownerPart.principalId || ownerPart.principal_id;
+            }
+          }
+          let actorName = payload?.actor_name || payload?.actorName || frame?.actor_name || frame?.actorName ||
+            payload?.display_name || payload?.displayName || frame?.display_name || frame?.displayName || null;
+          if (!actorName && actorId) {
+            actorName = resolveParticipantName(actorId, null, eventRoomId);
+          }
+
+          createAndRecordGroupDescriptionSystemMessage(eventRoomId, {
+            prevDescription,
+            newDescription,
+            actorId,
+            actorName,
+            eventId: frame?.id || payload?.id || null,
+            createdAt: frame?.created_at || payload?.created_at || new Date().toISOString(),
+            eventSeq: Number(frame?.seq ?? frame?.event_seq ?? payload?.seq ?? 0)
+          });
+        }
+
+        conv.description = newDescription;
+        conv.about = newDescription;
+        if (activeContactInfoRoomId === eventRoomId) {
+          const currentUserId = shellState.currentUser?.userId || shellState.userProfile?.userId;
+          const caps = getGroupCapabilities(conv, activeGroupParticipants, currentUserId);
+          if (contactInfoAboutText) {
+            if (newDescription && typeof newDescription === 'string' && newDescription.trim() !== '') {
+              contactInfoAboutText.textContent = newDescription.trim();
+              contactInfoAboutText.classList.remove('contact-info-about-placeholder');
+              contactInfoAboutSection?.classList.remove('hidden');
+            } else if (caps.canEditDescription) {
+              contactInfoAboutText.textContent = 'Add group description';
+              contactInfoAboutText.classList.add('contact-info-about-placeholder');
+              contactInfoAboutSection?.classList.remove('hidden');
+            } else {
+              contactInfoAboutSection?.classList.add('hidden');
+            }
+          }
+        }
+      }
+
+      if (conv && newIconUrl !== undefined) {
+        conv.avatarUrl = newIconUrl;
+        conv.avatar_url = newIconUrl;
         renderConversationList();
       }
       break;
@@ -9436,7 +10393,87 @@ async function loadInbox() {
 
   try {
     const res = await window.ollacoreDesktop.chatApi.getInbox(50);
-    const conversations = Array.isArray(res?.conversations) ? res.conversations : [];
+    let conversations = Array.isArray(res?.conversations) ? res.conversations : [];
+    if (window.ollacoreDesktop?.db?.getConversations) {
+      try {
+        const dbConvs = await loadConversationsFromDb({ limit: 100 });
+        const currentUserId = shellState.currentUser?.userId || shellState.currentUser?.user_id || shellState.userProfile?.userId || shellState.userProfile?.user_id;
+        for (const conv of conversations) {
+          if (!conv) continue;
+          const convId = conv.roomId || conv.room_id || conv.id;
+          const localMatch = dbConvs.find((dbC) => (dbC.roomId || dbC.room_id || dbC.id) === convId);
+          if (localMatch) {
+            const isLastMsgOwn = isOwnMessage(conv.lastMessage, currentUserId);
+            const localLastId = localMatch.lastMessage?.id || localMatch.lastMessageId || localMatch.last_message_id;
+            const serverLastId = conv.lastMessage?.id || conv.last_message?.id || conv.lastMessage?.message_id || conv.last_message?.message_id;
+
+            const localSeq = Number(localMatch.lastMessage?.eventSeq ?? localMatch.lastMessage?.event_seq ?? localMatch.lastEventSeq ?? localMatch.last_event_seq ?? 0);
+            const serverSeq = Number(conv.lastMessage?.eventSeq ?? conv.lastMessage?.event_seq ?? conv.last_message?.event_seq ?? 0);
+
+            const localTime = localMatch.lastMessage?.createdAt || localMatch.lastMessage?.created_at || localMatch.lastMessageTime || localMatch.last_message_time || localMatch.updatedAt || localMatch.updated_at;
+            const serverTime = conv.lastMessage?.createdAt || conv.lastMessage?.created_at || conv.lastMessageTime || conv.last_message_time || conv.updatedAt || conv.updated_at;
+
+            const localPreview = (localMatch.lastMessage?.preview || localMatch.preview || localMatch.last_message_preview || '').trim();
+            const serverPreview = (conv.lastMessage?.preview || conv.preview || conv.last_message?.preview || '').trim();
+
+            const localUnread = localMatch.unreadCount ?? localMatch.unread_count ?? 0;
+            const localMarkedUnread = Boolean(localMatch.isMarkedUnread || localMatch.is_marked_unread);
+
+            const hasNewIncomingMsg = (() => {
+              if (isLastMsgOwn) return false;
+              if (serverSeq > 0 && localSeq > 0) {
+                return serverSeq > localSeq;
+              }
+              if (serverLastId && localLastId && serverLastId !== localLastId) {
+                if (serverTime && localTime) {
+                  return new Date(serverTime).getTime() > new Date(localTime).getTime() + 1000;
+                }
+                return true;
+              }
+              if (serverTime && localTime) {
+                const sTime = new Date(serverTime).getTime();
+                const lTime = new Date(localTime).getTime();
+                if (sTime > lTime + 1000) return true;
+                if (sTime <= lTime) return false;
+              }
+              if (localPreview && serverPreview && localPreview === serverPreview) {
+                return false;
+              }
+              if (!conv.lastMessage) return false;
+              return false;
+            })();
+
+            const noNewMessages = (localLastId && serverLastId && localLastId === serverLastId) ||
+              (localSeq > 0 && serverSeq > 0 && localSeq >= serverSeq) ||
+              (!hasNewIncomingMsg);
+
+            if (!localMarkedUnread && !conv.isMarkedUnread) {
+              if (isLastMsgOwn) {
+                conv.unreadCount = 0;
+                conv.unread_count = 0;
+              } else if (localUnread === 0 && noNewMessages) {
+                conv.unreadCount = 0;
+                conv.unread_count = 0;
+              }
+            } else if (localMarkedUnread) {
+              conv.isMarkedUnread = true;
+              conv.is_marked_unread = true;
+              conv.unreadCount = Math.max(1, conv.unreadCount || 1);
+              conv.unread_count = conv.unreadCount;
+            }
+          }
+        }
+        const exitedDbConvs = dbConvs.filter((c) => c && (c.isExited || c.exited));
+        for (const ec of exitedDbConvs) {
+          const ecId = ec.roomId || ec.room_id || ec.id;
+          if (!conversations.some((c) => (c.roomId || c.room_id || c.id) === ecId)) {
+            conversations.push(ec);
+          }
+        }
+      } catch (mergeErr) {
+        console.warn('[DB] Failed to merge cached exited conversations:', mergeErr);
+      }
+    }
     shellState.setInbox(conversations);
     inboxLoading?.classList.add('hidden');
     renderConversationList();
@@ -9501,7 +10538,7 @@ async function handleAppIntent(intent) {
 
     voiceCallManager.handleIncomingCall({
       roomId: intent.roomId,
-      callId: intent.callId || `call-${Date.now()}`,
+      callId: intent.callId || null,
       initiator: intent.initiator || peerName,
       isVideo,
       callType,
@@ -9551,9 +10588,9 @@ async function onAuthenticatedScreenLoaded() {
       const pendingRoomId = (typeof pendingNav === 'object' && pendingNav !== null) ? pendingNav.roomId : pendingNav;
       const targetMessageId = (typeof pendingNav === 'object' && pendingNav !== null) ? pendingNav.messageId : null;
       if (pendingRoomId) {
-        try { closeSettings(); } catch {}
-        try { closeBackupModal(); } catch {}
-        try { closeNewChatModal(); } catch {}
+        try { closeSettings(); } catch { }
+        try { closeBackupModal(); } catch { }
+        try { closeNewChatModal(); } catch { }
         if (targetMessageId) {
           selectConversation(pendingRoomId, { forceReload: true, targetMessageId });
         } else {
@@ -9577,7 +10614,7 @@ async function handleLogout() {
   try {
     // Disconnect WebSocket
     if (window.ollacoreDesktop?.chat?.disconnect) {
-      await window.ollacoreDesktop.chat.disconnect().catch(() => {});
+      await window.ollacoreDesktop.chat.disconnect().catch(() => { });
     }
 
     // Call server logout & clear local session
@@ -9588,7 +10625,7 @@ async function handleLogout() {
     if (activeVoiceAudio) {
       try {
         activeVoiceAudio.pause();
-      } catch {}
+      } catch { }
       activeVoiceAudio = null;
     }
     stopLocalTyping();
@@ -9844,7 +10881,7 @@ export async function handleConfirmRestore() {
 
     // Refresh conversation list and UI
     if (typeof loadInbox === 'function') {
-      loadInbox().catch(() => {});
+      loadInbox().catch(() => { });
     }
   } catch (err) {
     if (restoreStatusBanner) {
@@ -10504,7 +11541,7 @@ export function renderCallParticipantsList(participantsToRender) {
 
 export function inviteParticipantToCall(participant, buttonEl) {
   const pId = participant?.principalId || participant?.principal_id;
-  if (!pId) return;
+  if (!pId || inFlightCallInvitations.has(pId)) return Promise.resolve(false);
 
   inFlightCallInvitations.add(pId);
   if (buttonEl) {
@@ -10513,21 +11550,30 @@ export function inviteParticipantToCall(participant, buttonEl) {
   }
 
   const roomId = voiceCallManager.roomId;
-  if (!roomId) return;
-
   const isVideo = voiceCallManager.isVideo;
   const callType = voiceCallManager.mode || (isVideo ? 'video' : 'voice');
-
-  sendCallSignal('invite', roomId, {
+  return sendCallSignal('invite', roomId, {
     callType,
     isVideo,
+    callId: voiceCallManager.callId,
+    callEpoch: voiceCallManager.callEpoch,
     targetUserId: pId
+  }).then(() => {
+    if (buttonEl) {
+      buttonEl.textContent = 'Invited';
+      buttonEl.classList.add('invited');
+    }
+    return true;
+  }).catch(() => {
+    inFlightCallInvitations.delete(pId);
+    if (buttonEl) {
+      buttonEl.textContent = 'Invite';
+      buttonEl.disabled = false;
+      buttonEl.classList.remove('invited');
+    }
+    showCallAddParticipantError('Could not send the invitation. Please try again.');
+    return false;
   });
-
-  if (buttonEl) {
-    buttonEl.textContent = 'Invited';
-    buttonEl.classList.add('invited');
-  }
 }
 
 export async function openCallAddParticipantModal() {
@@ -10580,15 +11626,18 @@ export function closeCallAddParticipantModal() {
   }
 }
 
+let groupParticipantsRefreshSeq = 0;
+
 export async function refreshGroupParticipants(roomId) {
   if (!roomId || !window.ollacoreDesktop?.chatApi?.getParticipants) return;
+  const seq = ++groupParticipantsRefreshSeq;
 
   groupMembersLoading?.classList.remove('hidden');
   if (groupMembersList) groupMembersList.innerHTML = '';
 
   try {
     const res = await window.ollacoreDesktop.chatApi.getParticipants(roomId);
-    if (activeGroupInfoRoomId !== roomId) return;
+    if (activeGroupInfoRoomId !== roomId || seq !== groupParticipantsRefreshSeq) return;
 
     activeGroupParticipants = Array.isArray(res?.participants) ? res.participants : [];
     shellState?.setRoomParticipants(roomId, activeGroupParticipants);
@@ -10826,6 +11875,12 @@ export async function handleAddGroupMemberToExisting() {
     }
 
     await window.ollacoreDesktop.chatApi.addMember(activeGroupInfoRoomId, targetUserId);
+    createAndRecordGroupSystemMessage(activeGroupInfoRoomId, {
+      action: 'add',
+      actorId: currentUserId,
+      targetUserId,
+      targetName: matchedContact.displayName || matchedContact.phone || null
+    });
     if (groupAddMemberPhone) groupAddMemberPhone.value = '';
     await refreshGroupParticipants(activeGroupInfoRoomId);
     showGroupSuccess('Member added to group');
@@ -10844,6 +11899,12 @@ export async function handleRemoveMember(principalId) {
 
   try {
     await window.ollacoreDesktop.chatApi.removeMember(activeGroupInfoRoomId, principalId);
+    const curUid = shellState.currentUser?.userId || shellState.userProfile?.userId;
+    createAndRecordGroupSystemMessage(activeGroupInfoRoomId, {
+      action: 'remove',
+      actorId: curUid,
+      targetUserId: principalId
+    });
     await refreshGroupParticipants(activeGroupInfoRoomId);
     showGroupSuccess('Member removed from group');
   } catch (err) {
@@ -10859,6 +11920,13 @@ export async function handleSetMemberRole(principalId, role) {
 
   try {
     await window.ollacoreDesktop.chatApi.setMemberRole(activeGroupInfoRoomId, principalId, role);
+    const curUid = shellState.currentUser?.userId || shellState.userProfile?.userId;
+    createAndRecordGroupSystemMessage(activeGroupInfoRoomId, {
+      action: 'role_update',
+      actorId: curUid,
+      targetUserId: principalId,
+      role
+    });
     await refreshGroupParticipants(activeGroupInfoRoomId);
     showGroupSuccess(role === 'admin' ? 'Member promoted to admin' : 'Admin role removed');
   } catch (err) {
@@ -10945,14 +12013,36 @@ export async function openContactInfo(roomId) {
       contactInfoGroupMeta.classList.remove('hidden');
     }
 
-    // Group description if available
+    // Group description
+    contactInfoDescForm?.classList.add('hidden');
+    contactInfoAboutText?.classList.remove('hidden');
     const desc = conv.description || conv.about;
-    if (desc && typeof desc === 'string' && desc.trim() !== '') {
-      if (contactInfoAboutTitle) contactInfoAboutTitle.textContent = 'Description';
-      if (contactInfoAboutText) contactInfoAboutText.textContent = desc.trim();
+    if (contactInfoAboutTitle) contactInfoAboutTitle.textContent = 'Description';
+    if (caps.canEditDescription) {
+      btnContactInfoEditDesc?.classList.remove('hidden');
+      if (desc && typeof desc === 'string' && desc.trim() !== '') {
+        if (contactInfoAboutText) {
+          contactInfoAboutText.textContent = desc.trim();
+          contactInfoAboutText.classList.remove('contact-info-about-placeholder');
+        }
+      } else {
+        if (contactInfoAboutText) {
+          contactInfoAboutText.textContent = 'Add group description';
+          contactInfoAboutText.classList.add('contact-info-about-placeholder');
+        }
+      }
       contactInfoAboutSection?.classList.remove('hidden');
     } else {
-      contactInfoAboutSection?.classList.add('hidden');
+      btnContactInfoEditDesc?.classList.add('hidden');
+      if (desc && typeof desc === 'string' && desc.trim() !== '') {
+        if (contactInfoAboutText) {
+          contactInfoAboutText.textContent = desc.trim();
+          contactInfoAboutText.classList.remove('contact-info-about-placeholder');
+        }
+        contactInfoAboutSection?.classList.remove('hidden');
+      } else {
+        contactInfoAboutSection?.classList.add('hidden');
+      }
     }
 
     // Details section hidden for groups
@@ -10975,6 +12065,10 @@ export async function openContactInfo(roomId) {
     btnGroupAddPeople?.classList.add('hidden');
     btnContactInfoEditName?.classList.add('hidden');
     contactInfoRenameForm?.classList.add('hidden');
+    btnContactInfoEditDesc?.classList.add('hidden');
+    contactInfoDescForm?.classList.add('hidden');
+    contactInfoAboutText?.classList.remove('contact-info-about-placeholder');
+    contactInfoAboutText?.classList.remove('hidden');
     contactInfoExitGroupRow?.classList.add('hidden');
     contactInfoDeleteChatRow?.classList.remove('hidden');
 
@@ -11066,6 +12160,9 @@ export async function openContactInfo(roomId) {
     }
   }
 
+  contactInfoStarredRow?.classList.remove('hidden');
+  updateContactInfoStarredCount(roomId);
+
   contactInfoPanel?.classList.remove('hidden');
 }
 
@@ -11091,15 +12188,18 @@ export function closeContactInfo() {
   if (typeof activePinnedRoomId !== 'undefined') activePinnedRoomId = null;
 }
 
+let contactInfoRefreshSeq = 0;
+
 export async function refreshContactInfoParticipants(roomId) {
   if (!roomId || !window.ollacoreDesktop?.chatApi?.getParticipants) return;
+  const seq = ++contactInfoRefreshSeq;
 
   contactInfoParticipantsLoading?.classList.remove('hidden');
   if (contactInfoParticipantsList) contactInfoParticipantsList.innerHTML = '';
 
   try {
     const res = await window.ollacoreDesktop.chatApi.getParticipants(roomId);
-    if (activeContactInfoRoomId !== roomId) return;
+    if (activeContactInfoRoomId !== roomId || seq !== contactInfoRefreshSeq) return;
 
     const participants = Array.isArray(res?.participants)
       ? res.participants
@@ -11125,6 +12225,38 @@ export async function refreshContactInfoParticipants(roomId) {
       btnContactInfoEditName?.classList.add('hidden');
       contactInfoRenameForm?.classList.add('hidden');
       contactInfoName?.classList.remove('hidden');
+    }
+
+    // Admin description control
+    if (caps.canEditDescription) {
+      btnContactInfoEditDesc?.classList.remove('hidden');
+      contactInfoAboutSection?.classList.remove('hidden');
+      const desc = conv?.description || conv?.about;
+      if (!desc || typeof desc !== 'string' || desc.trim() === '') {
+        if (contactInfoAboutText) {
+          contactInfoAboutText.textContent = 'Add group description';
+          contactInfoAboutText.classList.add('contact-info-about-placeholder');
+        }
+      } else {
+        if (contactInfoAboutText) {
+          contactInfoAboutText.textContent = desc.trim();
+          contactInfoAboutText.classList.remove('contact-info-about-placeholder');
+        }
+      }
+    } else {
+      btnContactInfoEditDesc?.classList.add('hidden');
+      contactInfoDescForm?.classList.add('hidden');
+      contactInfoAboutText?.classList.remove('hidden');
+      const desc = conv?.description || conv?.about;
+      if (desc && typeof desc === 'string' && desc.trim() !== '') {
+        if (contactInfoAboutText) {
+          contactInfoAboutText.textContent = desc.trim();
+          contactInfoAboutText.classList.remove('contact-info-about-placeholder');
+        }
+        contactInfoAboutSection?.classList.remove('hidden');
+      } else {
+        contactInfoAboutSection?.classList.add('hidden');
+      }
     }
 
     // Add people button in participants section
@@ -11488,22 +12620,11 @@ export function requestExitGroup(roomId) {
   if (!roomId) return;
   const conv = shellState.conversations?.find((c) => c.roomId === roomId);
   const title = conv ? getConversationTitle(conv) : 'this group';
-  const currentUserId = shellState.currentUser?.userId || shellState.userProfile?.userId;
 
-  // Protect against leaving group orphaned without an owner if other members remain
-  if (Array.isArray(activeGroupParticipants) && activeGroupParticipants.length > 1) {
-    const self = activeGroupParticipants.find((p) => isParticipantSelf(p, currentUserId));
-    const selfRole = String(self?.role || '').toLowerCase().trim();
-    if (selfRole === 'owner' || selfRole === 'creator') {
-      const ownerCount = activeGroupParticipants.filter((p) => {
-        const r = String(p?.role || '').toLowerCase().trim();
-        return r === 'owner' || r === 'creator';
-      }).length;
-      if (ownerCount <= 1) {
-        alert('You are the only owner of this group. Please promote another member to owner before leaving.');
-        return;
-      }
-    }
+  // Open WhatsApp-style confirmation modal if available; fallback to confirmation modal
+  if (leaveGroupConfirmModal) {
+    openLeaveGroupConfirmModal(roomId);
+    return;
   }
 
   openConfirmModal(
@@ -11519,11 +12640,10 @@ export function requestExitGroup(roomId) {
         if (conv) {
           conv.isExited = true;
           conv.exited = true;
+          persistConversationToDb(conv).catch(() => { });
         }
         if (shellState.selectedRoomId === roomId) {
-          shellState.selectedRoomId = null;
-          chatSelectedPanel?.classList.add('hidden');
-          chatEmptyPanel?.classList.remove('hidden');
+          updateExitedGroupUI(conv);
         }
         closeContactInfo();
         renderConversationList();
@@ -11545,6 +12665,7 @@ export function requestDeleteChat(roomId) {
       shellState.removeConversation(roomId);
       const rState = getOrCreateRoomMessagesState(roomId);
       rState.clearMessages(roomId);
+      deleteConversationFromDb(roomId).catch(() => { });
       if (shellState.selectedRoomId === roomId) {
         shellState.selectedRoomId = null;
         chatSelectedPanel?.classList.add('hidden');
@@ -11685,12 +12806,80 @@ export function closeGroupAddPeopleModal() {
   selectedAddContactUserIds.clear();
 }
 
+let isProcessingLeaveGroup = false;
+
+export function openLeaveGroupConfirmModal(roomId) {
+  if (!roomId || !leaveGroupConfirmModal) return;
+  pendingLeaveGroupRoomId = roomId;
+
+  if (leaveGroupModalTitle) {
+    leaveGroupModalTitle.textContent = 'Exit group?';
+  }
+  if (leaveGroupModalMessage) {
+    leaveGroupModalMessage.textContent = 'Are you sure you want to exit this group?';
+  }
+  leaveGroupConfirmModal.classList.remove('hidden');
+}
+
+export function closeLeaveGroupConfirmModal() {
+  if (leaveGroupConfirmModal) {
+    leaveGroupConfirmModal.classList.add('hidden');
+  }
+  pendingLeaveGroupRoomId = null;
+}
+
+export async function handleConfirmLeaveGroup(roomId, { deleteChat = false } = {}) {
+  const targetRoomId = roomId || pendingLeaveGroupRoomId;
+  if (!targetRoomId || isProcessingLeaveGroup) return;
+
+  const conv = shellState.conversations?.find((c) => c.roomId === targetRoomId);
+
+  isProcessingLeaveGroup = true;
+  closeLeaveGroupConfirmModal();
+
+  try {
+    if (voiceCallManager && voiceCallManager.currentRoomId === targetRoomId && voiceCallManager.state !== 'IDLE' && voiceCallManager.state !== 'ENDED') {
+      voiceCallManager.endCall(true);
+    }
+    await window.ollacoreDesktop.chatApi.leaveGroup(targetRoomId);
+
+    if (deleteChat) {
+      // Exit and delete: execute local deletion only after leaveGroup succeeds
+      shellState.removeConversation(targetRoomId);
+      const rState = getOrCreateRoomMessagesState(targetRoomId);
+      rState.clearMessages(targetRoomId);
+      deleteConversationFromDb(targetRoomId).catch(() => { });
+      shellState.selectedRoomId = null;
+      chatSelectedPanel?.classList.add('hidden');
+    } else {
+      if (conv) {
+        conv.isExited = true;
+        conv.exited = true;
+        persistConversationToDb(conv).catch(() => { });
+        if (shellState.selectedRoomId === targetRoomId) {
+          updateExitedGroupUI(conv);
+        }
+      }
+    }
+    closeContactInfo();
+    renderConversationList();
+    updateChatFilterCounts();
+  } catch (err) {
+    alert(formatBackendGroupError('Exit group', err));
+  } finally {
+    isProcessingLeaveGroup = false;
+  }
+}
+
+export async function handleConfirmDeleteGroupChat(roomId) {
+  return handleConfirmLeaveGroup(roomId, { deleteChat: true });
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // IN-CHAT MESSAGE SEARCH CONTROLLER
 // ═══════════════════════════════════════════════════════════════════
 
-const chatSearchState = {
+export const chatSearchState = {
   isOpen: false,
   query: '',
   results: [],
@@ -11967,7 +13156,6 @@ function navigateToSearchResult(index) {
     }, 2000);
   }
 }
-
 // ═══════════════════════════════════════════════════════════════════
 // MEDIA BROWSER PANEL (Media / Links / Docs — current conversation)
 // ═══════════════════════════════════════════════════════════════════
@@ -12114,7 +13302,7 @@ function _populateMbTab(tab, roomId) {
                 img.addEventListener('click', () => openImagePreview(url, resolved.filename, resolved.caption));
                 ph.replaceWith(img);
               }
-            }).catch(() => {});
+            }).catch(() => { });
           }
         }
       } else if (resolved.kind === 'video') {
@@ -12153,7 +13341,7 @@ function _populateMbTab(tab, roomId) {
                 ph.replaceWith(vid);
                 thumb.appendChild(badge);
               }
-            }).catch(() => {});
+            }).catch(() => { });
           }
         }
       }
@@ -12189,7 +13377,7 @@ function _populateMbTab(tab, roomId) {
     for (const { url, msg } of linkItems) {
       let domain = url;
       const href = /^www\./i.test(url) ? 'https://' + url : url;
-      try { domain = new URL(href).hostname.replace(/^www\./, ''); } catch (_) {}
+      try { domain = new URL(href).hostname.replace(/^www\./, ''); } catch (_) { }
 
       const card = document.createElement('div');
       card.className = 'mb-link-card';
@@ -12401,8 +13589,29 @@ const starredList = document.getElementById('starred-list');
 const starredLoading = document.getElementById('starred-loading');
 const starredEmpty = document.getElementById('starred-empty');
 const contactInfoStarredRow = document.getElementById('contact-info-starred-row');
+const contactInfoStarredCount = document.getElementById('contact-info-starred-count');
 
 let activeStarredRoomId = null;
+
+export async function updateContactInfoStarredCount(roomId) {
+  if (!contactInfoStarredCount || !roomId) return;
+  try {
+    const dbStarred = await loadStarredMessagesFromDb(roomId);
+    let count = Array.isArray(dbStarred) ? dbStarred.length : 0;
+    const rState = roomMessagesMap.get(roomId) || activeRoomMessagesState;
+    if (rState?.getStarredMessageIds) {
+      const memIds = rState.getStarredMessageIds(roomId);
+      if (memIds && memIds.length > count) {
+        count = memIds.length;
+      }
+    }
+    contactInfoStarredCount.textContent = count > 0 ? String(count) : '';
+  } catch (err) {
+    const rState = roomMessagesMap.get(roomId) || activeRoomMessagesState;
+    const count = rState?.getStarredMessageIds ? rState.getStarredMessageIds(roomId).length : 0;
+    contactInfoStarredCount.textContent = count > 0 ? String(count) : '';
+  }
+}
 
 function openStarredMessages(roomId) {
   if (!roomId || !starredMessagesPanel) return;
@@ -12416,44 +13625,62 @@ function closeStarredMessages() {
   activeStarredRoomId = null;
 }
 
-function _renderStarredMessages(roomId) {
+async function _renderStarredMessages(roomId) {
   if (!starredList) return;
   starredList.innerHTML = '';
-  starredLoading?.classList.add('hidden');
+  starredLoading?.classList.remove('hidden');
   starredEmpty?.classList.add('hidden');
 
-  // Get all starred message IDs for this room
-  // getStarredMessageIds is available on any RoomMessagesState
   const targetState = roomMessagesMap.get(roomId) || activeRoomMessagesState;
-  if (!targetState) {
-    starredEmpty?.classList.remove('hidden');
+
+  // 1. Load starred messages from SQLite (authoritative local database)
+  let dbStarred = [];
+  try {
+    dbStarred = await loadStarredMessagesFromDb(roomId);
+  } catch (err) {
+    console.warn('[_renderStarredMessages] SQLite load failed:', err);
+  }
+
+  starredLoading?.classList.add('hidden');
+
+  // Check if active starred room has changed while waiting for async SQLite call
+  if (activeStarredRoomId && activeStarredRoomId !== roomId) {
     return;
   }
 
-  const starredIds = targetState.getStarredMessageIds(roomId);
-  if (!starredIds || starredIds.length === 0) {
-    starredEmpty?.classList.remove('hidden');
-    return;
-  }
+  // Combine with in-memory targetState starred IDs if any optimistic stars exist
+  const inMemoryStarredIds = targetState?.getStarredMessageIds(roomId) || [];
+  const inMemoryMessages = Array.isArray(targetState?.messages) ? targetState.messages : [];
 
-  // Find messages from loaded state that match starred IDs
-  const allMessages = Array.isArray(targetState.messages) ? targetState.messages : [];
   const starredMessages = [];
   const seen = new Set();
 
-  for (const mid of starredIds) {
-    const found = allMessages.find((m) =>
+  // First, add all valid messages retrieved from SQLite (excluding deleted)
+  for (const msg of dbStarred) {
+    if (!msg || msg.isDeleted || msg.is_deleted || msg.kind === 'deleted' || msg.isDeletedForMe || msg.is_deleted_for_me) continue;
+    const key = msg.id || msg.clientMessageId || msg.client_message_id;
+    if (key && !seen.has(key)) {
+      seen.add(key);
+      starredMessages.push({ msg, mid: key });
+      // Keep in-memory state synchronized
+      if (targetState && !targetState.isStarred(key, roomId)) {
+        targetState.starMessage(key, roomId);
+      }
+    }
+  }
+
+  // Then, check any in-memory starred messages not yet reflected in SQLite query
+  for (const mid of inMemoryStarredIds) {
+    if (seen.has(mid)) continue;
+    const found = inMemoryMessages.find((m) =>
       m.id === mid || m.clientMessageId === mid || m.client_message_id === mid
     );
-    const key = found ? (found.id || found.clientMessageId || mid) : mid;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    if (found && !found.isDeleted && found.kind !== 'deleted') {
-      starredMessages.push({ msg: found, mid });
-    } else {
-      // Starred ID exists but message not loaded or was deleted — show placeholder
-      starredMessages.push({ msg: null, mid });
+    if (found && !found.isDeleted && !found.is_deleted && found.kind !== 'deleted' && !found.isDeletedForMe && !found.is_deleted_for_me) {
+      const key = found.id || found.clientMessageId || found.client_message_id || mid;
+      if (!seen.has(key)) {
+        seen.add(key);
+        starredMessages.push({ msg: found, mid: key });
+      }
     }
   }
 
@@ -12464,57 +13691,12 @@ function _renderStarredMessages(roomId) {
 
   const conv = shellState.conversations?.find((c) => c.roomId === roomId);
   const convName = conv ? getConversationTitle(conv) : 'Conversation';
-  const currentUserId = targetState.currentUserId || shellState.currentUser?.userId || shellState.userProfile?.userId;
+  const currentUserId = targetState?.currentUserId || shellState.currentUser?.userId || shellState.userProfile?.userId;
 
-  // Newest starred first (messages array is roughly chronological)
-  const reversed = [...starredMessages].reverse();
-
-  for (const { msg, mid } of reversed) {
+  for (const { msg, mid } of starredMessages) {
     const item = document.createElement('div');
     item.className = 'starred-msg-item';
     item.setAttribute('data-message-id', mid);
-
-    if (!msg) {
-      // Message not available (not loaded or deleted)
-      const avatar = document.createElement('div');
-      avatar.className = `avatar avatar-sm`;
-      avatar.textContent = '?';
-      avatar.style.backgroundColor = '#888';
-
-      const content = document.createElement('div');
-      content.className = 'starred-msg-content';
-
-      const senderEl = document.createElement('div');
-      senderEl.className = 'starred-msg-sender';
-      senderEl.textContent = convName;
-
-      const previewEl = document.createElement('div');
-      previewEl.className = 'starred-msg-unavailable';
-      previewEl.textContent = 'Message not available';
-
-      content.appendChild(senderEl);
-      content.appendChild(previewEl);
-
-      const unstarBtn = document.createElement('button');
-      unstarBtn.type = 'button';
-      unstarBtn.className = 'starred-msg-unstar-btn';
-      unstarBtn.title = 'Remove star';
-      unstarBtn.textContent = '★';
-      unstarBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        targetState.unstarMessage(mid, roomId);
-        item.remove();
-        if (!starredList.querySelector('.starred-msg-item')) {
-          starredEmpty?.classList.remove('hidden');
-        }
-      });
-
-      item.appendChild(avatar);
-      item.appendChild(content);
-      item.appendChild(unstarBtn);
-      starredList.appendChild(item);
-      continue;
-    }
 
     // Resolve sender
     const isOwn = isOwnMessage(msg, currentUserId);
@@ -12561,12 +13743,14 @@ function _renderStarredMessages(roomId) {
     unstarBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const msgId = msg.id || msg.clientMessageId || msg.client_message_id || mid;
-      targetState.unstarMessage(msgId, roomId);
+      if (targetState) targetState.unstarMessage(msgId, roomId);
+      persistMessageStarredToDb(msgId, false, roomId).catch(() => { });
       item.remove();
       renderMessages(); // refresh star indicator in chat
       if (!starredList.querySelector('.starred-msg-item')) {
         starredEmpty?.classList.remove('hidden');
       }
+      updateContactInfoStarredCount(roomId);
     });
 
     item.appendChild(avatarEl);
@@ -12574,19 +13758,14 @@ function _renderStarredMessages(roomId) {
     item.appendChild(timeEl);
     item.appendChild(unstarBtn);
 
-    // Click to jump to message
-    item.addEventListener('click', (e) => {
+    // Click to jump to message: reuse jumpToOriginalMessage
+    item.addEventListener('click', async (e) => {
       if (e.target.closest('.starred-msg-unstar-btn')) return;
       closeStarredMessages();
       closeContactInfo();
-      // Select the room if not already open
-      if (shellState.selectedRoomId !== roomId) {
-        selectConversation(roomId);
-      }
-      // Attempt to scroll to and highlight the message
-      const msgId = msg.id || msg.clientMessageId || msg.client_message_id;
+      const msgId = msg.id || msg.clientMessageId || msg.client_message_id || mid;
       if (msgId) {
-        _scrollToAndHighlightMessage(msgId);
+        await jumpToOriginalMessage(msgId, roomId);
       }
     });
 
@@ -12631,8 +13810,10 @@ function _scrollToAndHighlightMessage(messageId) {
 if (btnCloseStarredMessages) {
   btnCloseStarredMessages.addEventListener('click', () => {
     closeStarredMessages();
-    if (activeContactInfoRoomId) {
+    const returnRoomId = activeContactInfoRoomId || shellState.selectedRoomId;
+    if (returnRoomId) {
       contactInfoPanel?.classList.remove('hidden');
+      updateContactInfoStarredCount(returnRoomId);
     }
   });
 }
@@ -12640,9 +13821,10 @@ if (btnCloseStarredMessages) {
 // Wire up contact info starred row
 if (contactInfoStarredRow) {
   contactInfoStarredRow.addEventListener('click', () => {
-    if (activeContactInfoRoomId) {
+    const targetRoomId = activeContactInfoRoomId || shellState.selectedRoomId;
+    if (targetRoomId) {
       contactInfoPanel?.classList.add('hidden');
-      openStarredMessages(activeContactInfoRoomId);
+      openStarredMessages(targetRoomId);
     }
   });
   contactInfoStarredRow.addEventListener('keydown', (e) => {
@@ -13123,7 +14305,7 @@ export async function renderGroupMessageInfo(message, targetRoom) {
       if (activeMessageInfoState && (activeMessageInfoState.message?.id === message.id || activeMessageInfoState.message?.clientMessageId === message.clientMessageId)) {
         renderGroupMessageInfo(message, targetRoom);
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   // 3. Partition members into Read, Delivered, Pending using pure partitioning helper
@@ -13229,7 +14411,7 @@ export function openMessageInfoModal(message) {
         infoReadRow?.classList.add('hidden');
         infoDeliveredRow?.classList.add('hidden');
       }
-      
+
       // We don't have timestamps for delivered/read in OllaCore, so hide the time field completely
       if (infoReadTime) infoReadTime.textContent = '';
       if (infoDeliveredTime) infoDeliveredTime.textContent = '';
@@ -13309,10 +14491,10 @@ async function handleDeleteForEveryone(message) {
   // Only after REST DELETE succeeds:
   const clientMsgId = message.clientMessageId || message.client_message_id;
   targetState.deleteMessage(canonicalServerMessageId);
-  persistMessageDeletedToDb(canonicalServerMessageId).catch(() => {});
+  persistMessageDeletedToDb(canonicalServerMessageId).catch(() => { });
   if (clientMsgId && clientMsgId !== canonicalServerMessageId) {
     targetState.deleteMessage(clientMsgId);
-    persistMessageDeletedToDb(clientMsgId).catch(() => {});
+    persistMessageDeletedToDb(clientMsgId).catch(() => { });
   }
   if (message.id && message.id !== canonicalServerMessageId) {
     targetState.deleteMessage(message.id);
@@ -13355,7 +14537,7 @@ async function handleDeleteForEveryone(message) {
   if (conv && conv.lastMessage) {
     conv.lastMessage.preview = 'This message was deleted';
     renderConversationList();
-    persistConversationToDb(conv).catch(() => {});
+    persistConversationToDb(conv).catch(() => { });
   }
 }
 
@@ -13365,10 +14547,10 @@ function handleDeleteForMe(message) {
   const mid = message.id || message.clientMessageId || message.client_message_id;
 
   roomMessagesState.deleteMessageForMe(mid, targetRoom);
-  persistMessageDeletedForMeToDb(mid).catch(() => {});
+  persistMessageDeletedForMeToDb(mid).catch(() => { });
   if (message.id && message.id !== mid) {
     roomMessagesState.deleteMessageForMe(message.id, targetRoom);
-    persistMessageDeletedForMeToDb(message.id).catch(() => {});
+    persistMessageDeletedForMeToDb(message.id).catch(() => { });
   }
 
   // Update reply cache if this message was cached
@@ -13430,7 +14612,7 @@ async function handleDeleteSelectedMessages({ forEveryone = false } = {}) {
         handleDeleteForMe(msg);
       } else {
         roomMessagesState.deleteMessageForMe(id, currentRoomId);
-        persistMessageDeletedForMeToDb(id).catch(() => {});
+        persistMessageDeletedForMeToDb(id).catch(() => { });
       }
     }
   }
@@ -13518,8 +14700,8 @@ function handleForwardAction(message) {
     const selectedIds = shellState.getSelectedMessageIds();
     const msgs = roomMessagesState.messages.filter((m) => {
       return (m.id && selectedIds.includes(String(m.id))) ||
-             (m.clientMessageId && selectedIds.includes(String(m.clientMessageId))) ||
-             (m.client_message_id && selectedIds.includes(String(m.client_message_id)));
+        (m.clientMessageId && selectedIds.includes(String(m.clientMessageId))) ||
+        (m.client_message_id && selectedIds.includes(String(m.client_message_id)));
     });
     openForwardModal(msgs.length > 0 ? msgs : [message]);
   } else {
@@ -13696,7 +14878,7 @@ async function forwardSingleMessage(msg, targetRoomId, currentUserId) {
     optimisticMsg.isForwarded = true;
 
     targetState.addOptimisticMessage(optimisticMsg);
-    persistMessageToDb(optimisticMsg, targetRoomId).catch(() => {});
+    persistMessageToDb(optimisticMsg, targetRoomId).catch(() => { });
 
     if (shellState.selectedRoomId === targetRoomId) {
       messagesEmpty?.classList.add('hidden');
@@ -13714,7 +14896,7 @@ async function forwardSingleMessage(msg, targetRoomId, currentUserId) {
         kind: 'text'
       };
       renderConversationList();
-      persistConversationToDb(conv).catch(() => {});
+      persistConversationToDb(conv).catch(() => { });
     }
 
     pendingPayloads.set(clientMessageId, {
@@ -13747,7 +14929,7 @@ async function forwardSingleMessage(msg, targetRoomId, currentUserId) {
       const wsState = await window.ollacoreDesktop?.chat?.getState();
       if (wsState !== 'connected' || (typeof navigator !== 'undefined' && !navigator.onLine)) {
         targetState.updateReceipt(clientMessageId, 'pending');
-        persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+        persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
         if (shellState.selectedRoomId === targetRoomId) {
           updateMessageStatusInDom(clientMessageId, 'pending');
         }
@@ -13759,7 +14941,7 @@ async function forwardSingleMessage(msg, targetRoomId, currentUserId) {
         requestToClient.set(res.requestId, clientMessageId);
       } else {
         targetState.updateReceipt(clientMessageId, 'pending');
-        persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+        persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
         if (shellState.selectedRoomId === targetRoomId) {
           updateMessageStatusInDom(clientMessageId, 'pending');
         }
@@ -13767,7 +14949,7 @@ async function forwardSingleMessage(msg, targetRoomId, currentUserId) {
     } catch (err) {
       console.error('[Forwarding:text] Error sending WebSocket frame:', err);
       targetState.updateReceipt(clientMessageId, 'pending');
-      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => {});
+      persistMessageStatusToDb(clientMessageId, 'pending').catch(() => { });
       if (shellState.selectedRoomId === targetRoomId) {
         updateMessageStatusInDom(clientMessageId, 'pending');
       }
@@ -13839,7 +15021,7 @@ async function forwardSingleMessage(msg, targetRoomId, currentUserId) {
               sourceAttachmentId = String(typeof rawMatchAid === 'object' ? (rawMatchAid.id || rawMatchAid.attachment_id) : rawMatchAid);
               msg.attachment_ids = [sourceAttachmentId];
               msg.attachmentIds = [sourceAttachmentId];
-              persistMessageToDb(match, sourceRoomId).catch(() => {});
+              persistMessageToDb(match, sourceRoomId).catch(() => { });
             }
           }
         }
@@ -13940,7 +15122,7 @@ async function forwardSingleMessage(msg, targetRoomId, currentUserId) {
     }
 
     targetState.addOptimisticMessage(optimisticMsg);
-    persistMessageToDb(optimisticMsg, targetRoomId).catch(() => {});
+    persistMessageToDb(optimisticMsg, targetRoomId).catch(() => { });
 
     if (shellState.selectedRoomId === targetRoomId) {
       messagesEmpty?.classList.add('hidden');
@@ -13966,7 +15148,7 @@ async function forwardSingleMessage(msg, targetRoomId, currentUserId) {
         kind: wireKind
       };
       renderConversationList();
-      persistConversationToDb(conv).catch(() => {});
+      persistConversationToDb(conv).catch(() => { });
     }
 
     const messageBody = {
@@ -13997,7 +15179,7 @@ async function forwardSingleMessage(msg, targetRoomId, currentUserId) {
       requestToClient.set(res.requestId, clientMessageId);
     } else {
       targetState.updateReceipt(clientMessageId, 'failed');
-      persistMessageStatusToDb(clientMessageId, 'failed').catch(() => {});
+      persistMessageStatusToDb(clientMessageId, 'failed').catch(() => { });
       if (shellState.selectedRoomId === targetRoomId) {
         updateMessageStatusInDom(clientMessageId, 'failed');
       }
@@ -14533,7 +15715,7 @@ async function init() {
     if (e.target === backupModal) closeBackupModal();
   });
   window.ollacoreDesktop?.backup?.onRestoreCompleted?.(() => {
-    if (typeof loadInbox === 'function') loadInbox().catch(() => {});
+    if (typeof loadInbox === 'function') loadInbox().catch(() => { });
   });
 
   // 10. Phase 4B: New Chat modal triggers
@@ -14699,6 +15881,106 @@ async function init() {
       contactInfoRenameForm?.classList.add('hidden');
       contactInfoName?.classList.remove('hidden');
       btnContactInfoEditName?.classList.remove('hidden');
+    }
+  });
+
+  // Contact Info Group Description Listeners
+  btnContactInfoEditDesc?.addEventListener('click', () => {
+    if (!contactInfoDescForm || !contactInfoDescInput) return;
+    const conv = shellState.conversations?.find((c) => c.roomId === activeContactInfoRoomId);
+    const desc = conv?.description || conv?.about || '';
+    contactInfoDescInput.value = desc;
+    if (contactInfoDescCounter) {
+      contactInfoDescCounter.textContent = String(512 - desc.length);
+      contactInfoDescCounter.classList.toggle('text-danger', desc.length > 512);
+    }
+    contactInfoDescForm.classList.remove('hidden');
+    contactInfoAboutText?.classList.add('hidden');
+    btnContactInfoEditDesc?.classList.add('hidden');
+    contactInfoDescInput.focus();
+    contactInfoDescInput.select();
+  });
+
+  contactInfoAboutText?.addEventListener('click', () => {
+    if (contactInfoAboutText.classList.contains('contact-info-about-placeholder') && !btnContactInfoEditDesc?.classList.contains('hidden')) {
+      btnContactInfoEditDesc?.click();
+    }
+  });
+
+  btnContactInfoCancelDesc?.addEventListener('click', () => {
+    contactInfoDescForm?.classList.add('hidden');
+    contactInfoAboutText?.classList.remove('hidden');
+    btnContactInfoEditDesc?.classList.remove('hidden');
+  });
+
+  contactInfoDescInput?.addEventListener('input', () => {
+    const len = contactInfoDescInput.value.length;
+    if (contactInfoDescCounter) {
+      contactInfoDescCounter.textContent = String(512 - len);
+      contactInfoDescCounter.classList.toggle('text-danger', len > 512);
+    }
+  });
+
+  async function handleContactInfoSaveDesc() {
+    if (!activeContactInfoRoomId) return;
+    if (isSavingGroupDescription) return;
+    const raw = contactInfoDescInput?.value || '';
+    const val = validateGroupDescription(raw);
+    if (!val.valid) {
+      alert(val.error);
+      contactInfoDescInput?.focus();
+      return;
+    }
+    isSavingGroupDescription = true;
+    setButtonLoading(btnContactInfoSaveDesc, true);
+    try {
+      const conv = shellState.conversations?.find((c) => c.roomId === activeContactInfoRoomId);
+      const oldDesc = conv?.description || conv?.about || '';
+      await window.ollacoreDesktop.chatApi.updateGroup(activeContactInfoRoomId, { description: val.description });
+      const currentUserId = shellState.currentUser?.userId || shellState.userProfile?.userId;
+      const actorName = resolveParticipantName(currentUserId, null, activeContactInfoRoomId);
+
+      createAndRecordGroupDescriptionSystemMessage(activeContactInfoRoomId, {
+        prevDescription: oldDesc,
+        newDescription: val.description,
+        actorId: currentUserId,
+        actorName
+      });
+
+      if (conv) {
+        conv.description = val.description;
+        conv.about = val.description;
+      }
+      if (contactInfoAboutText) {
+        if (val.description && val.description.trim() !== '') {
+          contactInfoAboutText.textContent = val.description.trim();
+          contactInfoAboutText.classList.remove('contact-info-about-placeholder');
+        } else {
+          contactInfoAboutText.textContent = 'Add group description';
+          contactInfoAboutText.classList.add('contact-info-about-placeholder');
+        }
+      }
+      contactInfoDescForm?.classList.add('hidden');
+      contactInfoAboutText?.classList.remove('hidden');
+      btnContactInfoEditDesc?.classList.remove('hidden');
+    } catch (err) {
+      alert(formatBackendGroupError('Update group description', err));
+    } finally {
+      isSavingGroupDescription = false;
+      setButtonLoading(btnContactInfoSaveDesc, false);
+    }
+  }
+
+  btnContactInfoSaveDesc?.addEventListener('click', handleContactInfoSaveDesc);
+  contactInfoDescInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleContactInfoSaveDesc();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      contactInfoDescForm?.classList.add('hidden');
+      contactInfoAboutText?.classList.remove('hidden');
+      btnContactInfoEditDesc?.classList.remove('hidden');
     }
   });
 
@@ -14932,6 +16214,14 @@ async function init() {
         closeConfirmModal();
         try {
           await window.ollacoreDesktop.chatApi.setMemberRole(roomId, mId, 'owner');
+          const curUid = shellState.currentUser?.userId || shellState.userProfile?.userId;
+          createAndRecordGroupSystemMessage(roomId, {
+            action: 'promote',
+            actorId: curUid,
+            targetUserId: mId,
+            targetName: pName,
+            role: 'owner'
+          });
           if (false) await window.ollacoreDesktop.chatApi.setMemberRole(roomId, mId, 'admin');
           await refreshContactInfoParticipants(roomId);
           showToast(`${pName} is now a group owner`);
@@ -14983,6 +16273,13 @@ async function init() {
         closeConfirmModal();
         try {
           await window.ollacoreDesktop.chatApi.removeMember(roomId, mId);
+          const curUid = shellState.currentUser?.userId || shellState.userProfile?.userId;
+          createAndRecordGroupSystemMessage(roomId, {
+            action: 'remove',
+            actorId: curUid,
+            targetUserId: mId,
+            targetName: pName
+          });
           await refreshContactInfoParticipants(roomId);
           showToast(`${pName} removed from group`);
         } catch (err) {
@@ -15098,6 +16395,13 @@ async function init() {
         selectedAddContactUserId = userIds[0] || selectedAddContactUserId;
         await window.ollacoreDesktop.chatApi.addMember(roomId, selectedAddContactUserId);
       }
+      const curUid = shellState.currentUser?.userId || shellState.userProfile?.userId;
+      createAndRecordGroupSystemMessage(roomId, {
+        action: 'add',
+        actorId: curUid,
+        targetUserIds: userIds.length > 1 ? userIds : undefined,
+        targetUserId: userIds.length === 1 ? userIds[0] : undefined
+      });
       closeGroupAddPeopleModal();
       await refreshContactInfoParticipants(roomId);
       showToast(userIds.length > 1 ? `${userIds.length} members added` : 'Member added to group');
@@ -15170,6 +16474,21 @@ async function init() {
     if (typeof pendingConfirmAction === 'function') {
       pendingConfirmAction();
     }
+  });
+
+  // Leave Group Confirm modal listeners
+  btnCloseLeaveGroup?.addEventListener('click', closeLeaveGroupConfirmModal);
+  btnLeaveGroupCancel?.addEventListener('click', closeLeaveGroupConfirmModal);
+  leaveGroupConfirmModal?.addEventListener('click', (e) => {
+    if (e.target === leaveGroupConfirmModal) {
+      closeLeaveGroupConfirmModal();
+    }
+  });
+  btnLeaveGroupConfirm?.addEventListener('click', () => {
+    handleConfirmLeaveGroup(pendingLeaveGroupRoomId, { deleteChat: false });
+  });
+  btnLeaveGroupDelete?.addEventListener('click', () => {
+    handleConfirmDeleteGroupChat(pendingLeaveGroupRoomId);
   });
 
   // Clear Chat modal listeners
@@ -15307,8 +16626,8 @@ async function init() {
     const selectedIds = shellState.getSelectedMessageIds();
     const msgs = roomMessagesState.messages.filter((m) => {
       return (m.id && selectedIds.includes(String(m.id))) ||
-             (m.clientMessageId && selectedIds.includes(String(m.clientMessageId))) ||
-             (m.client_message_id && selectedIds.includes(String(m.client_message_id)));
+        (m.clientMessageId && selectedIds.includes(String(m.clientMessageId))) ||
+        (m.client_message_id && selectedIds.includes(String(m.client_message_id)));
     });
     if (msgs.length > 0) {
       openForwardModal(msgs);
@@ -15890,7 +17209,7 @@ async function init() {
         applyAppTheme(res.theme, { persist: false });
         updateAppearanceButtons(res.theme);
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   initSystemThemeListener(async () => {
@@ -15908,6 +17227,8 @@ async function init() {
         closeThemeModal();
       } else if (groupConfirmModal && !groupConfirmModal.classList.contains('hidden')) {
         closeConfirmModal();
+      } else if (leaveGroupConfirmModal && !leaveGroupConfirmModal.classList.contains('hidden')) {
+        closeLeaveGroupConfirmModal();
       } else if (groupInfoModal && !groupInfoModal.classList.contains('hidden')) {
         closeGroupInfo();
       } else if (imagePreviewModal && !imagePreviewModal.classList.contains('hidden')) {
@@ -15955,6 +17276,7 @@ async function init() {
     clearUnseenIncomingMessages(shellState.selectedRoomId);
     if (shellState.selectedRoomId) {
       saveRoomScrollPosition(shellState.selectedRoomId, { forceNearBottom: true });
+      scheduleDismissUnreadDivider(shellState.selectedRoomId, 1000);
     }
   });
 
@@ -15986,6 +17308,8 @@ async function init() {
     } else {
       scrollBottomBtn?.classList.add('hidden');
       clearUnseenIncomingMessages(shellState.selectedRoomId);
+      advanceReadCursorForActiveRoom();
+      scheduleDismissUnreadDivider(shellState.selectedRoomId, 1500);
     }
     updateFloatingDateOnScroll();
   });
@@ -16100,13 +17424,20 @@ async function init() {
       } else if (action === 'star') {
         const targetRoom = msg.roomId || msg.room_id || shellState.selectedRoomId;
         const mid = msg.id || msg.clientMessageId || msg.client_message_id;
-        if (roomMessagesState.isStarred(mid, targetRoom)) {
+        const isStarredNow = roomMessagesState.isStarred(mid, targetRoom);
+        if (isStarredNow) {
           roomMessagesState.unstarMessage(mid, targetRoom);
+          persistMessageStarredToDb(mid, false, targetRoom).catch(() => { });
         } else {
           roomMessagesState.starMessage(mid, targetRoom);
+          persistMessageStarredToDb(mid, true, targetRoom).catch(() => { });
         }
         closeContextMenu();
         renderMessages();
+        updateContactInfoStarredCount(targetRoom);
+        if (starredMessagesPanel && !starredMessagesPanel.classList.contains('hidden') && activeStarredRoomId === targetRoom) {
+          _renderStarredMessages(targetRoom);
+        }
       } else if (action === 'pin') {
         const targetRoom = msg.roomId || msg.room_id || shellState.selectedRoomId;
         const mid = msg.id || msg.clientMessageId || msg.client_message_id;
@@ -16152,19 +17483,19 @@ async function init() {
         shellState.togglePinChat(roomId);
         renderConversationList();
         closeConversationContextMenu();
-        if (item) persistConversationToDb(item).catch(() => {});
+        if (item) persistConversationToDb(item).catch(() => { });
       } else if (action === 'favourite') {
         shellState.toggleFavouriteChat(roomId);
         renderConversationList();
         updateChatFilterCounts();
         closeConversationContextMenu();
-        if (item) persistConversationToDb(item).catch(() => {});
+        if (item) persistConversationToDb(item).catch(() => { });
       } else if (action === 'toggle-unread') {
         shellState.markConversationAsUnread(roomId);
         renderConversationList();
         updateChatFilterCounts();
         closeConversationContextMenu();
-        if (item) persistConversationToDb(item).catch(() => {});
+        if (item) persistConversationToDb(item).catch(() => { });
       } else if (action === 'archive') {
         shellState.archiveChat(roomId);
         renderConversationList();
@@ -16180,6 +17511,9 @@ async function init() {
         } else {
           openMuteDurationModal(roomId);
         }
+      } else if (action === 'leave-group' || action === 'exit-group') {
+        closeConversationContextMenu();
+        openLeaveGroupConfirmModal(roomId);
       } else if (action === 'delete' || action === 'delete-chat') {
         closeConversationContextMenu();
         requestDeleteChat(roomId);
@@ -16205,24 +17539,24 @@ async function init() {
         renderConversationList();
         updateChatFilterCounts();
         closeArchivedContextMenu();
-        if (item) persistConversationToDb(item).catch(() => {});
+        if (item) persistConversationToDb(item).catch(() => { });
       } else if (action === 'toggle-unread') {
         shellState.markConversationAsUnread(roomId);
         renderArchivedList();
         renderConversationList();
         updateChatFilterCounts();
         closeArchivedContextMenu();
-        if (item) persistConversationToDb(item).catch(() => {});
+        if (item) persistConversationToDb(item).catch(() => { });
       } else if (action === 'pin') {
         shellState.togglePinChat(roomId);
         renderArchivedList();
         closeArchivedContextMenu();
-        if (item) persistConversationToDb(item).catch(() => {});
+        if (item) persistConversationToDb(item).catch(() => { });
       } else if (action === 'favourite') {
         shellState.toggleFavouriteChat(roomId);
         renderArchivedList();
         closeArchivedContextMenu();
-        if (item) persistConversationToDb(item).catch(() => {});
+        if (item) persistConversationToDb(item).catch(() => { });
       }
     });
   }
@@ -16314,6 +17648,15 @@ async function init() {
     openChatSearch();
   });
 
+  menuItemStarredMessages?.addEventListener('click', () => {
+    const roomId = shellState.selectedRoomId;
+    closeChatHeaderMenu();
+    if (roomId) {
+      closeContactInfo();
+      openStarredMessages(roomId);
+    }
+  });
+
   menuItemChatTheme?.addEventListener('click', () => {
     const roomId = shellState.selectedRoomId;
     closeChatHeaderMenu();
@@ -16332,7 +17675,7 @@ async function init() {
       renderArchivedList();
       updateChatFilterCounts();
       const conv = shellState.conversations?.find((c) => c.roomId === roomId);
-      if (conv) persistConversationToDb(conv).catch(() => {});
+      if (conv) persistConversationToDb(conv).catch(() => { });
     }
   });
 
@@ -16353,7 +17696,7 @@ async function init() {
       renderArchivedList();
       updateChatFilterCounts();
       const conv = shellState.conversations?.find((c) => c.roomId === roomId);
-      if (conv) persistConversationToDb(conv).catch(() => {});
+      if (conv) persistConversationToDb(conv).catch(() => { });
     }
   });
 
@@ -16501,6 +17844,8 @@ async function init() {
         closeParticipantActionMenu();
       } else if (blockContactConfirmModal && !blockContactConfirmModal.classList.contains('hidden')) {
         closeBlockContactModal();
+      } else if (leaveGroupConfirmModal && !leaveGroupConfirmModal.classList.contains('hidden')) {
+        closeLeaveGroupConfirmModal();
       } else if (muteDurationModal && !muteDurationModal.classList.contains('hidden')) {
         closeMuteDurationModal();
       } else if (blockedContactsModal && !blockedContactsModal.classList.contains('hidden')) {
@@ -16568,6 +17913,10 @@ async function init() {
   btnVoiceRecord?.addEventListener('click', async () => {
     if (!shellState.selectedRoomId) {
       alert('Please select a conversation first');
+      return;
+    }
+    const selConv = shellState.getSelectedConversation();
+    if (selConv?.isExited || selConv?.exited) {
       return;
     }
 
@@ -16670,6 +18019,8 @@ async function init() {
   // 15. Phase 6B/6C: Voice & Video Call Listeners
   btnStartVoiceCall?.addEventListener('click', () => {
     if (!shellState.selectedRoomId) return;
+    const selected = shellState.getSelectedConversation();
+    if (selected?.isExited || selected?.exited) return;
     const { displayName, phone } = resolveCallerIdentity(shellState.selectedRoomId, null);
     const peerName = displayName || 'Voice Call';
     voiceCallManager.peerPhone = phone;
@@ -16681,6 +18032,8 @@ async function init() {
 
   btnStartVideoCall?.addEventListener('click', () => {
     if (!shellState.selectedRoomId) return;
+    const selected = shellState.getSelectedConversation();
+    if (selected?.isExited || selected?.exited) return;
     const { displayName, phone } = resolveCallerIdentity(shellState.selectedRoomId, null);
     const peerName = displayName || 'Video Call';
     voiceCallManager.peerPhone = phone;
@@ -16781,7 +18134,7 @@ async function init() {
       if (callErrorBanner) {
         callErrorBanner.textContent = 'Cannot share screen: another participant is already sharing';
         callErrorBanner.classList.remove('hidden');
-        setTimeout(() => { callErrorBanner.classList.add('hidden'); }, 4000);
+        scheduleCallPresentation(voiceCallManager, () => { callErrorBanner.classList.add('hidden'); }, 4000);
       }
       return;
     }
@@ -16814,7 +18167,7 @@ async function init() {
       if (callErrorBanner) {
         callErrorBanner.textContent = err?.message || 'Failed to load screen capture sources';
         callErrorBanner.classList.remove('hidden');
-        setTimeout(() => { callErrorBanner.classList.add('hidden'); }, 4000);
+        scheduleCallPresentation(voiceCallManager, () => { callErrorBanner.classList.add('hidden'); }, 4000);
       }
     }
   }
@@ -16854,7 +18207,7 @@ async function init() {
       if (callErrorBanner) {
         callErrorBanner.textContent = err?.message || 'Failed to start screen share';
         callErrorBanner.classList.remove('hidden');
-        setTimeout(() => { callErrorBanner.classList.add('hidden'); }, 4000);
+        scheduleCallPresentation(voiceCallManager, () => { callErrorBanner.classList.add('hidden'); }, 4000);
       }
     }
   });
@@ -16902,7 +18255,7 @@ async function init() {
     e.stopPropagation();
     minimizeCall();
     if (typeof window !== 'undefined' && window.ollacoreDesktop?.floatingCall) {
-      window.ollacoreDesktop.floatingCall.show().catch(() => {});
+      window.ollacoreDesktop.floatingCall.show().catch(() => { });
       syncFloatingCallState();
       startFloatingVideoBridge();
     }
@@ -16940,7 +18293,7 @@ async function init() {
       } else if (actionType === 'toggle-mute') {
         voiceCallManager.toggleMute();
       } else if (actionType === 'toggle-camera') {
-        Promise.resolve(voiceCallManager.toggleCamera()).then(() => syncFloatingCallState()).catch(() => {});
+        Promise.resolve(voiceCallManager.toggleCamera()).then(() => syncFloatingCallState()).catch(() => { });
       } else if (actionType === 'start-screenshare') {
         const sourceId = action.sourceId;
         if (sourceId) {
@@ -16949,10 +18302,10 @@ async function init() {
           });
         }
       } else if (actionType === 'stop-screenshare') {
-        voiceCallManager.stopScreenShare().then(() => syncFloatingCallState()).catch(() => {});
+        voiceCallManager.stopScreenShare().then(() => syncFloatingCallState()).catch(() => { });
       } else if (actionType === 'toggle-screenshare') {
         if (voiceCallManager.isScreenSharing) {
-          voiceCallManager.stopScreenShare().then(() => syncFloatingCallState()).catch(() => {});
+          voiceCallManager.stopScreenShare().then(() => syncFloatingCallState()).catch(() => { });
         } else if (!hasFloatingBridge) {
           if (typeof window.ollacoreDesktop?.app?.focusWindow === 'function') {
             window.ollacoreDesktop.app.focusWindow();
@@ -16981,25 +18334,32 @@ async function init() {
             window.ollacoreDesktop.floatingCall.bridgeSignal({
               type: 'call-participants-list',
               participants: mapped
-            }).catch(() => {});
+            }).catch(() => { });
           }).catch((err) => {
             window.ollacoreDesktop.floatingCall.bridgeSignal({
               type: 'call-participants-list',
               error: err?.message || 'Failed to load participants',
               participants: []
-            }).catch(() => {});
+            }).catch(() => { });
           });
         }
       } else if (actionType === 'invite-participant') {
         const targetUserId = action.targetUserId;
-        if (targetUserId && voiceCallManager.roomId) {
+        if (targetUserId) {
           inFlightCallInvitations.add(targetUserId);
           const isVideo = Boolean(voiceCallManager.isVideo || voiceCallManager.mode === 'video');
           const callType = voiceCallManager.mode || (isVideo ? 'video' : 'voice');
           sendCallSignal('invite', voiceCallManager.roomId, {
             callType,
             isVideo,
+            callId: voiceCallManager.callId,
+            callEpoch: voiceCallManager.callEpoch,
             targetUserId
+          }).then(() => {
+            syncFloatingCallState();
+          }).catch(() => {
+            inFlightCallInvitations.delete(targetUserId);
+            syncFloatingCallState();
           });
           syncFloatingCallState();
         }
@@ -17078,14 +18438,14 @@ async function init() {
         if (signal.type === 'answer' && signal.answer) {
           await localVideoBridgePc.setRemoteDescription(new RTCSessionDescription(signal.answer));
           for (const cand of pendingBridgeCandidates) {
-            try { await localVideoBridgePc.addIceCandidate(new RTCIceCandidate(cand)); } catch (_) {}
+            try { await localVideoBridgePc.addIceCandidate(new RTCIceCandidate(cand)); } catch (_) { }
           }
           pendingBridgeCandidates = [];
         } else if (signal.type === 'candidate' && signal.candidate && signal.candidate.candidate) {
           if (!localVideoBridgePc.remoteDescription) {
             pendingBridgeCandidates.push(signal.candidate);
           } else {
-            try { await localVideoBridgePc.addIceCandidate(new RTCIceCandidate(signal.candidate)); } catch (_) {}
+            try { await localVideoBridgePc.addIceCandidate(new RTCIceCandidate(signal.candidate)); } catch (_) { }
           }
         }
       } catch (err) {
@@ -17100,7 +18460,7 @@ async function init() {
     // Cleanly report without sending unsupported frames or faking local state:
     if (callStatusLabel) {
       callStatusLabel.textContent = 'Video upgrade pending backend protocol';
-      setTimeout(() => {
+      scheduleCallPresentation(voiceCallManager, () => {
         if (voiceCallManager.state === CALL_STATE.CONNECTED && callStatusLabel) {
           callStatusLabel.textContent = 'Connected';
         }
@@ -17121,7 +18481,7 @@ async function init() {
     callDragState.tileInitialY = rect.top;
     try {
       voiceCallCard.setPointerCapture?.(e.pointerId);
-    } catch {}
+    } catch { }
   });
 
   voiceCallCard?.addEventListener('pointermove', (e) => {
@@ -17148,7 +18508,7 @@ async function init() {
       if (e.pointerId && voiceCallCard.hasPointerCapture?.(e.pointerId)) {
         voiceCallCard.releasePointerCapture?.(e.pointerId);
       }
-    } catch {}
+    } catch { }
   };
 
   voiceCallCard?.addEventListener('pointerup', stopCallTileDrag);
@@ -17214,6 +18574,13 @@ async function init() {
     const isVideo = Boolean(voiceCallManager.isVideo || voiceCallManager.mode === 'video');
     const roomId = voiceCallManager.roomId || shellState.selectedRoomId;
 
+    if (state === CALL_STATE.IDLE) {
+      const idleRoom = roomId || shellState.selectedRoomId;
+      if (idleRoom) {
+        recentlyInitiatedCalls.delete(String(idleRoom).trim());
+      }
+    }
+
     if (state === CALL_STATE.OUTGOING_RINGING) {
       const { displayName, phone } = resolveCallerIdentity(roomId, null);
       activeCallSession = {
@@ -17252,7 +18619,7 @@ async function init() {
       };
     } else if (state === CALL_STATE.CONNECTED) {
       if (activeCallSession) {
-        activeCallSession.connectedAt = Date.now();
+        activeCallSession.connectedAt = voiceCallManager.callConnectedAt || activeCallSession.connectedAt;
         activeCallSession.status = 'completed';
       }
       if (isVideo) {
@@ -17268,6 +18635,10 @@ async function init() {
       state === CALL_STATE.REMOTE_CANCELLED ||
       state === CALL_STATE.FAILED
     ) {
+      const termRoomId = roomId || voiceCallManager.roomId || activeCallSession?.roomId || shellState.selectedRoomId;
+      if (termRoomId) {
+        recentlyInitiatedCalls.delete(String(termRoomId).trim());
+      }
       if (!activeCallSession && (voiceCallManager.callId || voiceCallManager.roomId || shellState.selectedRoomId)) {
         const { displayName, phone } = resolveCallerIdentity(roomId, null);
         activeCallSession = {
@@ -17282,7 +18653,7 @@ async function init() {
           callType: isVideo ? 'video' : 'voice',
           status: 'completed',
           startedAt: voiceCallManager.startTime || (Date.now() - ((voiceCallManager.durationSec || 0) * 1000)),
-          connectedAt: voiceCallManager.startTime || Date.now(),
+          connectedAt: voiceCallManager.callConnectedAt || null,
           endedAt: Date.now(),
           duration: voiceCallManager.durationSec || 0
         };
@@ -17309,6 +18680,7 @@ async function init() {
 
         // 1. Persist to room call log and room messages state
         if (callRoomId) {
+          recentlyInitiatedCalls.delete(String(callRoomId).trim());
           saveRoomCallRecord(callRoomId, activeCallSession, authUserId);
           const targetState = getOrCreateRoomMessagesState(callRoomId);
           targetState.addCallMessage(activeCallSession);
@@ -17346,8 +18718,8 @@ async function init() {
         // 3. Add to global calls tab
         shellState.addCallRecord(activeCallSession);
         try {
-          window.ollacoreDesktop?.db?.saveCallRecord?.(activeCallSession)?.catch?.(() => {});
-        } catch (_) {}
+          window.ollacoreDesktop?.db?.saveCallRecord?.(activeCallSession)?.catch?.(() => { });
+        } catch (_) { }
         activeCallSession = null;
         if (currentNavigationDestination === 'calls') {
           renderCallsHistory();
@@ -17500,7 +18872,7 @@ async function init() {
           }
         });
         if (shellState.selectedRoomId) {
-          syncServerReadCursorForRoom(shellState.selectedRoomId).catch(() => {});
+          syncServerReadCursorForRoom(shellState.selectedRoomId).catch(() => { });
         }
       }
       // If currently inside a specific conversation, update with room state if available,
@@ -17535,7 +18907,7 @@ async function init() {
         console.warn('[App] Reconnection error on online event:', err);
       }
       if (shellState.selectedRoomId) {
-        syncServerReadCursorForRoom(shellState.selectedRoomId).catch(() => {});
+        syncServerReadCursorForRoom(shellState.selectedRoomId).catch(() => { });
       }
       outboxManager.flush({
         chatBridge: window.ollacoreDesktop?.chat,
@@ -17558,14 +18930,14 @@ async function init() {
 
     if (window.ollacoreDesktop.chat.onNavigateRoom) {
       if (typeof navigateRoomUnsubscribe === 'function') {
-        try { navigateRoomUnsubscribe(); } catch {}
+        try { navigateRoomUnsubscribe(); } catch { }
         navigateRoomUnsubscribe = null;
       }
       navigateRoomUnsubscribe = window.ollacoreDesktop.chat.onNavigateRoom((roomId, messageId) => {
         if (!roomId) return;
-        try { closeSettings(); } catch {}
-        try { closeBackupModal(); } catch {}
-        try { closeNewChatModal(); } catch {}
+        try { closeSettings(); } catch { }
+        try { closeBackupModal(); } catch { }
+        try { closeNewChatModal(); } catch { }
         if (messageId) {
           selectConversation(roomId, { forceReload: true, targetMessageId: messageId });
         } else {
@@ -17644,7 +19016,7 @@ async function init() {
         if (typeof st.isVisible === 'boolean') isMainWindowVisible = Boolean(st.isVisible);
         if (typeof st.isFocused === 'boolean') isMainWindowFocused = Boolean(st.isFocused);
       }
-    }).catch(() => {});
+    }).catch(() => { });
   }
 }
 
@@ -17714,6 +19086,15 @@ if (typeof window !== 'undefined') {
     recentUnmatchedAcks,
     loadOlderMessages,
     markUserScrolled,
-    lastUserScrollActionTime
+    lastUserScrollActionTime,
+    createAndRecordGroupSystemMessage,
+    createAndRecordGroupDescriptionSystemMessage,
+    formatGroupDescriptionSystemText,
+    resolveParticipantName,
+    recentSystemEventsMap,
+    chatSearchState,
+    closeChatSearch,
+    openStarredMessages,
+    updateContactInfoStarredCount
   };
 }

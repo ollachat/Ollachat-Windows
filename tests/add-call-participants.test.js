@@ -177,6 +177,7 @@ describe('Add People to Active Call - Stage 2: Participant Lookup & Filtering Su
     manager.removeParticipant('user-bob');
     assert.equal(manager.hasParticipant('user-bob'), false);
     assert.equal(manager.participants.size, 1);
+    manager._beginCallInstance();
 
     manager._cleanupResources();
     assert.equal(manager.participants.size, 0, 'Participants must be cleared on cleanup');
@@ -245,6 +246,7 @@ describe('Add People to Active Call - Stage 3: Invitation Flow & Decline Invaria
 
     // Simulate active connected call between Alice and Bob
     manager.roomId = 'room-group-1';
+    manager._beginCallInstance();
     manager._setState(CALL_STATE.OUTGOING_RINGING);
     manager._setState(CALL_STATE.CONNECTING);
     manager._markConnected();
@@ -275,6 +277,7 @@ describe('Add People to Active Call - Stage 3: Invitation Flow & Decline Invaria
 
     // Simulate 1-to-1 outgoing ringing
     manager.roomId = 'room-direct-1';
+    manager._beginCallInstance();
     manager._setState(CALL_STATE.OUTGOING_RINGING);
 
     const incomingSignal = {
@@ -362,6 +365,7 @@ describe('Add People to Active Call - Stage 4: SFU Renegotiation & Multi-Party I
 
     manager.peerConnection = pc;
     manager.roomId = 'room-multi-1';
+    manager._beginCallInstance();
 
     // Transition to CONNECTED
     manager._setState(CALL_STATE.OUTGOING_RINGING);
@@ -401,6 +405,7 @@ describe('Add People to Active Call - Stage 4: SFU Renegotiation & Multi-Party I
 
     manager.peerConnection = pc;
     manager.roomId = 'room-multi-1';
+    manager._beginCallInstance();
 
     manager._setState(CALL_STATE.OUTGOING_RINGING);
     manager._setState(CALL_STATE.CONNECTING);
@@ -433,6 +438,7 @@ describe('Add People to Active Call - Stage 4: SFU Renegotiation & Multi-Party I
     manager.peerConnection = pc;
     manager.roomId = 'room-video-1';
     manager.isVideo = true;
+    manager._beginCallInstance();
 
     manager._setState(CALL_STATE.OUTGOING_RINGING);
     manager._setState(CALL_STATE.CONNECTING);
@@ -462,6 +468,7 @@ describe('Add People to Active Call - Stage 4: SFU Renegotiation & Multi-Party I
 
     manager.peerConnection = pc;
     manager.roomId = 'room-all-leave-1';
+    manager._beginCallInstance();
 
     manager._setState(CALL_STATE.OUTGOING_RINGING);
     manager._setState(CALL_STATE.CONNECTING);

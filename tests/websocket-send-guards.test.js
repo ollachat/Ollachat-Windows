@@ -313,7 +313,125 @@ describe('WebSocket Send Guards & InvalidStateError Fix Suite', () => {
     }
   });
 
-  test('7. isSocketOpen accurately evaluates standard, Undici, ws and mock socket states', () => {
+  test('7. Missing or absent exact room never falls back to another connected room socket', async () => {
+    for (const order of [['room-A', 'room-B'], ['room-B', 'room-A']]) {
+      StrictMockWebSocket.instances = [];
+      const ws = new ChatWebSocket({
+        WebSocketClass: StrictMockWebSocket,
+        connectTimeoutMs: 0,
+        multiRoom: true
+      });
+
+      try {
+        await ws.connectRoom(order[0], { token: `token-${order[0]}` });
+        await ws.connectRoom(order[1], { token: `token-${order[1]}` });
+        StrictMockWebSocket.instances[0].simulateOpen();
+        StrictMockWebSocket.instances[1].simulateOpen();
+
+        assert.throws(
+          () => ws.sendMessage('room-missing', 'missing-client-id', 'must not cross rooms'),
+          err => err?.code === 'room_socket_absent'
+        );
+        assert.throws(
+          () => ws.send('message.send', {}, null),
+          err => err?.code === 'room_required'
+        );
+        assert.equal(StrictMockWebSocket.instances[0].sentData.length, 0);
+        assert.equal(StrictMockWebSocket.instances[1].sentData.length, 0);
+      } finally {
+        ws.disconnect();
+      }
+    }
+  });
+
+  test('8. Exact-room error and disconnected states return stable codes without queueing', async () => {
+    const ws = new ChatWebSocket({
+      WebSocketClass: StrictMockWebSocket,
+      connectTimeoutMs: 0,
+      multiRoom: true
+    });
+
+    try {
+      await ws.connectRoom('room-state', { token: 'token-state' });
+      const entry = ws._roomSockets.get('room-state');
+      const socket = StrictMockWebSocket.instances[0];
+
+      entry.state = CONNECTION_STATE.ERROR;
+      assert.throws(
+        () => ws.sendMessage('room-state', 'client-error', 'error state'),
+        err => err?.code === 'room_socket_error'
+      );
+
+      entry.state = CONNECTION_STATE.DISCONNECTED;
+      socket.readyState = 3;
+      assert.throws(
+        () => ws.sendMessage('room-state', 'client-disconnected', 'disconnected state'),
+        err => err?.code === 'room_socket_not_connected'
+      );
+      assert.equal(ws.getPendingQueue('room-state').length, 0);
+      assert.equal(socket.sentData.length, 0);
+    } finally {
+      ws.disconnect();
+    }
+  });
+
+  test('9. Exact-room socket send exception returns socket_send_failed and does not leak to another room', async () => {
+    const ws = new ChatWebSocket({
+      WebSocketClass: StrictMockWebSocket,
+      connectTimeoutMs: 0,
+      multiRoom: true
+    });
+
+    try {
+      await ws.connectRoom('room-failing', { token: 'token-failing' });
+      await ws.connectRoom('room-healthy', { token: 'token-healthy' });
+      const failingSocket = StrictMockWebSocket.instances[0];
+      const healthySocket = StrictMockWebSocket.instances[1];
+      failingSocket.simulateOpen();
+      healthySocket.simulateOpen();
+      failingSocket.send = () => {
+        throw new Error('mock transport failure with unsafe detail');
+      };
+
+      assert.throws(
+        () => ws.sendMessage('room-failing', 'client-failing', 'send exception'),
+        err => err?.code === 'socket_send_failed' && !err.message.includes('unsafe detail')
+      );
+      assert.equal(healthySocket.sentData.length, 0);
+      assert.equal(ws.getPendingQueue('room-failing').length, 0);
+    } finally {
+      ws.disconnect();
+    }
+  });
+
+  test('10. Legacy single-socket connected and disconnected behavior remains unchanged', async () => {
+    const ws = new ChatWebSocket({
+      roomId: 'legacy-room',
+      token: 'legacy-token',
+      WebSocketClass: StrictMockWebSocket,
+      connectTimeoutMs: 0,
+      multiRoom: false
+    });
+
+    try {
+      await ws.connect();
+      const socket = StrictMockWebSocket.instances[0];
+      socket.simulateOpen();
+      const requestId = ws.sendMessage('legacy-room', 'legacy-client', 'legacy message');
+      assert.equal(decodeFrame(socket.sentData[0]).request_id, requestId);
+
+      socket.readyState = 3;
+      ws.state = CONNECTION_STATE.DISCONNECTED;
+      assert.throws(
+        () => ws.sendMessage('legacy-room', 'legacy-client-2', 'legacy disconnected'),
+        /WebSocket is not connected/
+      );
+    } finally {
+      ws.disconnect();
+    }
+  });
+
+  test('11. isSocketOpen accurately evaluates standard, Undici, ws and mock socket states', () => {
     assert.equal(isSocketOpen(null), false);
     assert.equal(isSocketOpen(undefined), false);
 
@@ -324,6 +442,6 @@ describe('WebSocket Send Guards & InvalidStateError Fix Suite', () => {
     assert.equal(isSocketOpen({ readyState: 3 }), false);
 
     // Mock objects without readyState field default to true
-    assert.equal(isSocketOpen({ send: () => {} }), true);
+    assert.equal(isSocketOpen({ send: () => { } }), true);
   });
 });

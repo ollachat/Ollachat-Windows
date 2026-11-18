@@ -50,6 +50,7 @@ class MockRTCPeerConnection {
     this.config = config;
     this.localDescription = null;
     this.remoteDescription = null;
+    this.signalingState = 'stable';
     this.senders = [];
     this.addedIceCandidates = [];
     this.connectionState = 'new';
@@ -85,9 +86,13 @@ class MockRTCPeerConnection {
   }
   async setLocalDescription(desc) {
     this.localDescription = desc;
+    if (desc.type === 'offer') this.signalingState = 'have-local-offer';
+    if (desc.type === 'answer') this.signalingState = 'stable';
   }
   async setRemoteDescription(desc) {
     this.remoteDescription = desc;
+    if (desc.type === 'offer') this.signalingState = 'have-remote-offer';
+    if (desc.type === 'answer') this.signalingState = 'stable';
   }
   async addIceCandidate(cand) {
     this.addedIceCandidates.push(cand);
@@ -200,6 +205,14 @@ class MockWebSocket {
   simulateOpen() {
     this.readyState = 1;
     if (this.onopen) this.onopen();
+  }
+  simulateMessage(frame) {
+    if (this.onmessage) {
+      this.onmessage({ data: JSON.stringify(frame) });
+    }
+  }
+  simulateError(message = 'WebSocket connection error') {
+    if (this.onerror) this.onerror({ message });
   }
   send(data) {
     this.sentFrames.push(data);
@@ -394,7 +407,7 @@ describe('Voice & Video Calling Lifecycle Fixes Suite (A through AB)', () => {
     await manager.endCall(false);
   });
 
-  test('K. Video answer contains video media', async () => {
+  test('K. Video SFU offer queues behind receiver publication and the eventual answer contains video media', async () => {
     const { manager, rtcBridge } = setupTestManager();
     manager.handleIncomingCall({
       roomId: 'room-k',
@@ -409,6 +422,15 @@ describe('Voice & Video Calling Lifecycle Fixes Suite (A through AB)', () => {
       type: 'offer',
       sdp: 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n',
       requestId: 42,
+      roomId: 'room-k'
+    });
+
+    assert.equal(rtcBridge.sentAnswers.length, 0, 'colliding SFU offer is queued');
+    assert.equal(manager._queuedSfuOffers.length, 1);
+
+    await rtcBridge.simulateEvent({
+      type: 'answer',
+      sdp: 'v=0\r\no=receiver-publication-answer\r\n',
       roomId: 'room-k'
     });
 
@@ -611,6 +633,7 @@ describe('Voice & Video Calling Lifecycle Fixes Suite (A through AB)', () => {
     const { manager, rtcBridge } = setupTestManager();
     await manager.startCall('room-ac', 'Alice');
     const pc = MockRTCPeerConnection.instances[0];
+    await rtcBridge.simulateEvent({ type: 'answer', sdp: 'v=0\r\no=publication-answer\r\n', roomId: 'room-ac' });
     pc.simulateTrack(new MockMediaStream([new MockTrack('audio')]));
     assert.equal(manager.state, CALL_STATE.CONNECTED);
     assert.ok(manager.callConnectedAt > 0);
@@ -634,6 +657,7 @@ describe('Voice & Video Calling Lifecycle Fixes Suite (A through AB)', () => {
     const { manager, rtcBridge } = setupTestManager();
     await manager.startVideoCall('room-ad', 'Bob');
     const pc = MockRTCPeerConnection.instances[0];
+    await rtcBridge.simulateEvent({ type: 'answer', sdp: 'v=0\r\no=publication-answer\r\n', roomId: 'room-ad' });
     pc.simulateTrack(new MockMediaStream([new MockTrack('audio'), new MockTrack('video')]));
     assert.equal(manager.state, CALL_STATE.CONNECTED);
 
@@ -656,6 +680,7 @@ describe('Voice & Video Calling Lifecycle Fixes Suite (A through AB)', () => {
     const { manager, rtcBridge } = setupTestManager();
     await manager.startVideoCall('room-ae', 'Charlie');
     const pc = MockRTCPeerConnection.instances[0];
+    await rtcBridge.simulateEvent({ type: 'answer', sdp: 'v=0\r\no=publication-answer\r\n', roomId: 'room-ae' });
     pc.simulateTrack(new MockMediaStream([new MockTrack('audio'), new MockTrack('video')]));
     assert.equal(manager.state, CALL_STATE.CONNECTED);
 
@@ -676,6 +701,7 @@ describe('Voice & Video Calling Lifecycle Fixes Suite (A through AB)', () => {
     const { manager, rtcBridge } = setupTestManager();
     await manager.startCall('room-af', 'David');
     const pc = MockRTCPeerConnection.instances[0];
+    await rtcBridge.simulateEvent({ type: 'answer', sdp: 'v=0\r\no=publication-answer\r\n', roomId: 'room-af' });
     pc.simulateTrack(new MockMediaStream([new MockTrack('audio')]));
     assert.equal(manager.state, CALL_STATE.CONNECTED);
 
@@ -689,6 +715,88 @@ describe('Voice & Video Calling Lifecycle Fixes Suite (A through AB)', () => {
 
     assert.equal(manager.state, CALL_STATE.CONNECTED);
     await manager.endCall(false);
+  });
+
+  test('AG. Superseding an RTC connect rejects the older attempt and preserves the newer socket', async () => {
+    MockWebSocket.instances = [];
+    const rtc = new RtcWebSocket({ WebSocketClass: MockWebSocket });
+    const firstConnect = rtc.connect({ roomId: 'room-old', token: 'rt_old' });
+    const oldSocket = MockWebSocket.instances[0];
+    const secondConnect = rtc.connect({ roomId: 'room-new', token: 'rt_new' });
+    const newSocket = MockWebSocket.instances[1];
+
+    await assert.rejects(firstConnect, /superseded/i);
+    oldSocket.simulateOpen();
+    assert.notEqual(rtc.state, 'connected');
+
+    newSocket.simulateOpen();
+    await secondConnect;
+    assert.equal(rtc.state, 'connected');
+    assert.equal(rtc.roomId, 'room-new');
+    rtc.disconnect();
+  });
+
+  test('AH. RTC close before open rejects the pending connect exactly once', async () => {
+    MockWebSocket.instances = [];
+    const rtc = new RtcWebSocket({ WebSocketClass: MockWebSocket });
+    const connectPromise = rtc.connect({ roomId: 'room-close', token: 'rt_close' });
+    const socket = MockWebSocket.instances[0];
+
+    socket.close(1006, 'network unavailable');
+    socket.simulateError('late duplicate error');
+
+    await assert.rejects(connectPromise, /network unavailable/i);
+    assert.equal(rtc.state, 'disconnected');
+  });
+
+  test('AI. Explicit disconnect rejects a connect that is still pending', async () => {
+    MockWebSocket.instances = [];
+    const rtc = new RtcWebSocket({ WebSocketClass: MockWebSocket });
+    const connectPromise = rtc.connect({ roomId: 'room-disconnect', token: 'rt_disconnect' });
+
+    rtc.disconnect();
+
+    await assert.rejects(connectPromise, /disconnected/i);
+    assert.equal(rtc.state, 'disconnected');
+  });
+
+  test('AJ. RTC offer request IDs round-trip without type or value coercion', async () => {
+    MockWebSocket.instances = [];
+    const rtc = new RtcWebSocket({ WebSocketClass: MockWebSocket });
+    const connectPromise = rtc.connect({ roomId: 'room-request-id', token: 'rt_request_id' });
+    const socket = MockWebSocket.instances[0];
+    socket.simulateOpen();
+    await connectPromise;
+
+    const requestIds = [
+      '550e8400-e29b-41d4-a716-446655440000',
+      'opaque-request-id',
+      0,
+      42,
+      900719925474099100000
+    ];
+
+    for (const expectedRequestId of requestIds) {
+      let receivedOffer = null;
+      const off = rtc.on('offer', (event) => {
+        receivedOffer = event;
+      });
+      socket.simulateMessage({
+        type: 'offer',
+        sdp: 'v=0\r\n',
+        request_id: expectedRequestId
+      });
+      off();
+
+      assert.ok(receivedOffer);
+      assert.equal(receivedOffer.requestId, expectedRequestId);
+      rtc.sendAnswer('v=0\r\nanswer\r\n', receivedOffer.requestId);
+      const answer = JSON.parse(socket.sentFrames.at(-1));
+      assert.equal(answer.request_id, expectedRequestId);
+      assert.equal(typeof answer.request_id, typeof expectedRequestId);
+    }
+
+    rtc.disconnect();
   });
 
 });

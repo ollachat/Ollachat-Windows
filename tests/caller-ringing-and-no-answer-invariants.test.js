@@ -7,10 +7,12 @@ class MockTrack {
     this.kind = kind;
     this.enabled = true;
     this.stopped = false;
+    this.readyState = 'live';
   }
 
   stop() {
     this.stopped = true;
+    this.readyState = 'ended';
   }
 }
 
@@ -363,7 +365,13 @@ describe('Caller Ringing & No-Answer Invariants Test Suite', () => {
     const remoteOfferSdp = 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=sendrecv\r\n';
     await manager._handleIncomingOffer(remoteOfferSdp, 42);
 
-    assert.equal(manager.state, CALL_STATE.CONNECTED, 'Must transition to CONNECTED on remote acceptance offer');
+    assert.equal(manager.state, CALL_STATE.OUTGOING_RINGING, 'SDP alone must not transition to CONNECTED');
+    assert.equal(manager.callConnectedAt, null, 'SDP alone must not start the duration timer');
+
+    const remoteAudioTrack = new MockTrack('audio');
+    manager.peerConnection.simulateTrack(new MockMediaStream([remoteAudioTrack]));
+
+    assert.equal(manager.state, CALL_STATE.CONNECTED, 'Must transition to CONNECTED on live remote media');
     assert.ok(manager.callConnectedAt !== null, 'Duration timer epoch must start on CONNECTED');
 
     const ui = computeCallUiState(manager);
@@ -447,6 +455,12 @@ describe('Caller Ringing & No-Answer Invariants Test Suite', () => {
     const remoteAnswerSdp = 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=sendrecv\r\n';
     await caller._handleIncomingAnswer(remoteAnswerSdp);
 
+    assert.equal(caller.state, CALL_STATE.OUTGOING_RINGING, 'SDP answer alone must leave the caller ringing');
+    assert.equal(caller.callConnectedAt, null);
+
+    const remoteAudioTrack = new MockTrack('audio');
+    caller.peerConnection.simulateTrack(new MockMediaStream([remoteAudioTrack]));
+
     assert.equal(caller.state, CALL_STATE.CONNECTED);
     assert.ok(caller.callConnectedAt !== null);
 
@@ -478,6 +492,12 @@ describe('Caller Ringing & No-Answer Invariants Test Suite', () => {
     // Caller receives remote renegotiation offer with active video
     const remoteVideoOffer = 'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=sendrecv\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=sendrecv\r\n';
     await caller._handleIncomingOffer(remoteVideoOffer, 99);
+
+    assert.equal(caller.state, CALL_STATE.OUTGOING_RINGING, 'SDP offer alone must leave the caller ringing');
+    assert.equal(caller.callConnectedAt, null);
+
+    const remoteVideoTrack = new MockTrack('video');
+    caller.peerConnection.simulateTrack(new MockMediaStream([remoteVideoTrack]));
 
     assert.equal(caller.state, CALL_STATE.CONNECTED);
     assert.equal(caller.isVideo, true);
@@ -521,6 +541,10 @@ describe('Caller Ringing & No-Answer Invariants Test Suite', () => {
       const { manager } = createCallerManager();
       await manager.startCall('room-12c', 'Bob');
       await manager._handleIncomingOffer('v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=sendrecv\r\n', 1);
+      assert.equal(manager.state, CALL_STATE.OUTGOING_RINGING, 'SDP offer alone must not connect the call');
+
+      const remoteAudioTrack = new MockTrack('audio');
+      manager.peerConnection.simulateTrack(new MockMediaStream([remoteAudioTrack]));
       assert.equal(manager.state, CALL_STATE.CONNECTED);
 
       await manager.endCall();

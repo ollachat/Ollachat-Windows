@@ -266,7 +266,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
       let floatingState = null;
       const mockFloatingCall = {
         syncState: (state) => { floatingState = state; },
-        show: () => {}
+        show: () => { }
       };
 
       const minimizeActiveAudioCall = () => {
@@ -333,7 +333,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
       let floatingState = null;
       const mockFloatingCall = {
         syncState: (state) => { floatingState = state; },
-        show: () => {}
+        show: () => { }
       };
 
       mockFloatingCall.syncState({
@@ -423,9 +423,9 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
       assert.ok(appJs.includes("voiceCallCard?.classList.remove('is-minimized'"), 'displays centered call card');
     });
 
-    test('3. Outgoing ringing appears in centered card without desktop floating window', () => {
-      assert.ok(appJs.includes('voiceCallManager.startCall = function(roomId, ...args)'), 'startCall wrapper exists');
-      assert.ok(appJs.includes('window.ollacoreDesktop.floatingCall.hide().catch(() => {});'), 'desktop floating window kept hidden on call start');
+    test('3. Outgoing ringing appears in the centered card and dedicated call window', () => {
+      assert.match(appJs, /voiceCallManager\.startCall\s*=\s*function\s*\(roomId, \.\.\.args\)/, 'startCall wrapper exists');
+      assert.ok(appJs.includes('window.ollacoreDesktop.floatingCall.show()'), 'dedicated call window is shown on call start');
       assert.ok(floatingHtml.includes('id="view-outgoing"'), 'floating window has outgoing view');
     });
 
@@ -437,7 +437,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
 
     test('5. User can switch conversations while call is ringing without destroying call', () => {
       const mgr = new VoiceCallManager({
-        sendSignal: () => {},
+        sendSignal: () => { },
         rtcBridge: { connect: async () => ({ ok: true }), sendOffer: async () => ({ ok: true }) }
       });
       mgr.state = CALL_STATE.OUTGOING_RINGING;
@@ -468,6 +468,17 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
     test('7. Incoming call appears in floating window', () => {
       assert.ok(floatingHtml.includes('id="view-incoming"'), 'floating incoming view exists');
       assert.ok(floatingJs.includes("state.state === 'incoming_ringing'"), 'floating handles incoming state');
+    });
+
+    test('7a. Main and floating renderers emit privacy-safe lifecycle synchronization diagnostics', () => {
+      assert.ok(appJs.includes("logCallUiSynchronization('main_ui_synchronized'"), 'main renderer lifecycle event is present');
+      assert.ok(appJs.includes("logCallUiSynchronization('floating_ui_state_sent'"), 'main-to-floating synchronization event is present');
+      assert.ok(floatingJs.includes("event: 'floating_ui_synchronized'"), 'floating renderer synchronization event is present');
+      assert.ok(appJs.includes('localOwnershipEpoch'), 'local ownership generation is diagnosed');
+      assert.ok(appJs.includes('signalingCorrelation'), 'signaling correlation result is diagnosed');
+      assert.ok(floatingJs.includes('ownsManagerState'), 'floating renderer records manager-state ownership');
+      assert.doesNotMatch(floatingJs, /CALL_UI_LIFECYCLE[\s\S]{0,300}(roomId|callId|peerName|peerUserId)/,
+        'floating lifecycle diagnostic does not include identifying fields');
     });
 
     test('8. User can accept incoming call from floating window', () => {
@@ -526,6 +537,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
 
     test('12. Transition from ringing -> declined cleans up state', () => {
       const mgr = new VoiceCallManager();
+      mgr._beginCallInstance();
       mgr.state = CALL_STATE.INCOMING_RINGING;
       mgr.declineCall();
       assert.strictEqual(mgr.state, CALL_STATE.DECLINED);
@@ -534,6 +546,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
 
     test('13. Transition from ringing -> cancelled cleans up state', () => {
       const mgr = new VoiceCallManager();
+      mgr._beginCallInstance();
       mgr.state = CALL_STATE.OUTGOING_RINGING;
       mgr.endCall();
       assert.strictEqual(mgr.state, CALL_STATE.CANCELLED);
@@ -631,6 +644,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
       this.transceivers = [];
       this.localDescription = null;
       this.remoteDescription = null;
+      this.signalingState = 'stable';
       this.connectionState = 'connected';
       this.iceConnectionState = 'connected';
       this.isClosed = false;
@@ -667,12 +681,24 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
       return tc;
     }
 
+    async createOffer() {
+      return { type: 'offer', sdp: 'v=0\r\no=floating-camera-offer\r\n' };
+    }
+
+    async createAnswer() {
+      return { type: 'answer', sdp: 'v=0\r\no=floating-camera-answer\r\n' };
+    }
+
     async setLocalDescription(desc) {
       this.localDescription = desc;
+      if (desc.type === 'offer') this.signalingState = 'have-local-offer';
+      if (desc.type === 'answer') this.signalingState = 'stable';
     }
 
     async setRemoteDescription(desc) {
       this.remoteDescription = desc;
+      if (desc.type === 'offer') this.signalingState = 'have-remote-offer';
+      if (desc.type === 'answer') this.signalingState = 'stable';
     }
 
     close() {
@@ -746,6 +772,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
 
     test('7. Timer starts when transitioning to CONNECTED', () => {
       const mgr = new VoiceCallManager();
+      mgr._beginCallInstance();
       mgr.state = CALL_STATE.CONNECTING;
       assert.strictEqual(mgr.callConnectedAt, null, 'callConnectedAt is null before connected');
       mgr._markConnected();
@@ -765,6 +792,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
 
     test('9. Timer updates every second via timerTick', async () => {
       const mgr = new VoiceCallManager();
+      mgr._beginCallInstance();
       mgr.startCallDurationTimer();
       let ticks = 0;
       mgr.on('timerTick', () => { ticks++; });
@@ -773,9 +801,13 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
       assert.ok(ticks >= 1, 'timerTick emitted at least once within 1.1s');
     });
 
-    test('10. Timer remains correct while minimized using authoritative epoch', () => {
-      assert.ok(floatingJs.includes('function startDurationTicker(callConnectedAt'), 'floating-call has dedicated ticker');
-      assert.ok(floatingJs.includes('Math.floor((Date.now() - callConnectedAt) / 1000)'), 'computes from authoritative epoch');
+    test('10. Floating timer renders synchronized manager duration without independent authority', () => {
+      assert.ok(
+        floatingJs.includes("renderSynchronizedDuration(state.state === 'connected' ? (state.duration || 0) : 0)"),
+        'floating renderer displays the synchronized manager duration'
+      );
+      assert.ok(!floatingJs.includes('startDurationTicker'), 'floating renderer has no dedicated ticker');
+      assert.ok(!floatingJs.includes('setInterval('), 'floating renderer owns no duration interval');
     });
 
     test('11. Timer remains correct after restore and does not drift', () => {
@@ -789,6 +821,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
 
     test('12. Timer stops and resets cleanly when call ends', () => {
       const mgr = new VoiceCallManager();
+      mgr._beginCallInstance();
       mgr.startCallDurationTimer();
       mgr.durationSec = 50;
       mgr.stopCallDurationTimer();
@@ -806,6 +839,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
         }
       }
       const mgr = new VoiceCallManager({ mediaDevices: new FailingMediaDevices() });
+      mgr._beginCallInstance();
       await assert.rejects(
         () => mgr._acquireMedia(true),
         /permission denied/i,
@@ -823,6 +857,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
         }
       }
       const mgr = new VoiceCallManager({ mediaDevices: new NotFoundMediaDevices() });
+      mgr._beginCallInstance();
       await assert.rejects(
         () => mgr._acquireMedia(true),
         /Device not found/i,
@@ -838,6 +873,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
         }
       }
       const mgr = new VoiceCallManager({ mediaDevices: new SuccessMediaDevices() });
+      mgr._beginCallInstance();
       const stream = await mgr._acquireMedia(true);
       assert.ok(stream.getVideoTracks().length > 0, 'video track acquired');
       assert.ok(mgr._localVideoTrack, 'local video track stored');
@@ -845,15 +881,16 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
       assert.strictEqual(mgr._localVideoTrack.readyState, 'live', 'local video track readyState is live');
     });
 
-    test('16. Camera track attached to RTCRtpSender and transceiver', () => {
+    test('16. Camera track attached to RTCRtpSender and transceiver', async () => {
       const pc = new MockRTCPeerConnection();
       const mgr = new VoiceCallManager();
+      mgr._beginCallInstance();
       mgr.peerConnection = pc;
       mgr._localStream = new MockMediaStream([new MockTrack('audio'), new MockTrack('video')]);
       mgr._localAudioTrack = mgr._localStream.getAudioTracks()[0];
       mgr._localVideoTrack = mgr._localStream.getVideoTracks()[0];
 
-      mgr._attachLocalTracks();
+      await mgr._attachLocalTracks(mgr.callEpoch, pc);
       const senders = pc.getSenders();
       const videoSender = senders.find(s => s.track && s.track.kind === 'video');
       assert.ok(videoSender, 'video sender created and attached');
@@ -868,6 +905,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
       }
       const pc = new MockRTCPeerConnection();
       const mgr = new VoiceCallManager({ mediaDevices: new TestMediaDevices() });
+      mgr._beginCallInstance();
       mgr.peerConnection = pc;
       await mgr._acquireMedia(true);
       mgr._attachLocalTracks();
@@ -891,6 +929,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
 
     test('18. Remote video track received and assigned to _remoteStream', () => {
       const mgr = new VoiceCallManager({ PeerConnectionClass: MockRTCPeerConnection });
+      mgr._beginCallInstance();
       const pc = mgr._createPeerConnection();
       const remoteVTrack = new MockTrack('video');
       const remoteStream = new MockMediaStream([remoteVTrack]);
@@ -902,6 +941,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
 
     test('19. Remote video element receives stream on track arrival', () => {
       const mgr = new VoiceCallManager({ PeerConnectionClass: MockRTCPeerConnection });
+      mgr._beginCallInstance();
       const mockVideoElement = { srcObject: null, play: () => Promise.resolve() };
       mgr.remoteVideoElement = mockVideoElement;
       mgr.isVideo = true;
@@ -924,7 +964,15 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
         }
       }
       const pc = new MockRTCPeerConnection();
-      const mgr = new VoiceCallManager({ mediaDevices: new DynamicMediaDevices() });
+      const rtcBridge = {
+        sentOffers: [],
+        async sendOffer(sdp, options) {
+          this.sentOffers.push({ sdp, options });
+          return { ok: true };
+        }
+      };
+      const mgr = new VoiceCallManager({ mediaDevices: new DynamicMediaDevices(), rtcBridge });
+      mgr._beginCallInstance();
       mgr.peerConnection = pc;
       await mgr._acquireMedia(false);
       assert.strictEqual(mgr._localVideoTrack, null, 'no video track initially');
@@ -935,6 +983,8 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
       assert.ok(mgr._localVideoTrack, 'local video track dynamically acquired');
       assert.strictEqual(mgr._localVideoTrack.enabled, true, 'local video track enabled');
       assert.strictEqual(mgr.isVideo, true, 'call upgraded to video modality');
+      assert.strictEqual(pc.localDescription.type, 'offer', 'camera upgrade creates a local renegotiation offer');
+      assert.strictEqual(rtcBridge.sentOffers.length, 1, 'camera upgrade sends the renegotiation offer');
     });
   });
 
@@ -953,7 +1003,7 @@ describe('WhatsApp-Style Floating / Minimized Call Window Suite', () => {
     });
 
     test('2. Dedicated WhatsApp-style call window appears when a call starts', () => {
-      assert.ok(appJs.includes('voiceCallManager.startCall = function(roomId, ...args)'), 'startCall wrapper exists');
+      assert.match(appJs, /voiceCallManager\.startCall\s*=\s*function\s*\(roomId, \.\.\.args\)/, 'startCall wrapper exists');
       assert.ok(appJs.includes('window.ollacoreDesktop.floatingCall.show()'), 'startCall shows dedicated call window');
       assert.ok(mainJs.includes("ipcMain.handle('floating-call:show'"), 'main process exposes floating-call:show handler');
     });

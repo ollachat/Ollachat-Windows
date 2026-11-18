@@ -683,6 +683,11 @@
                 <button type="button" id="btn-unblock-composer" class="btn btn-secondary btn-sm" style="margin-left: auto;">Unblock</button>
               </div>
 
+              <!-- Composer Exited Group Notice Banner (WhatsApp style read-only state) -->
+              <div id="composer-exited-banner" class="composer-exited-banner hidden" role="region" aria-label="Group exited">
+                <span id="composer-exited-text" class="composer-exited-text">You left this group. You can no longer send messages or make calls.</span>
+              </div>
+
               <div class="composer-box" id="composer-box">
                 <button
                   type="button"
@@ -834,10 +839,25 @@
 
             <div class="contact-info-divider"></div>
 
-            <!-- About / Bio Section (only if available) -->
+            <!-- About / Bio / Description Section -->
             <div class="contact-info-section hidden" id="contact-info-about-section">
-              <span class="contact-info-section-title" id="contact-info-about-title">About</span>
+              <div class="contact-info-section-header">
+                <span class="contact-info-section-title" id="contact-info-about-title">About</span>
+                <button type="button" id="btn-contact-info-edit-desc" class="btn-icon btn-sm hidden" title="Edit group description" aria-label="Edit group description">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                </button>
+              </div>
               <p class="contact-info-about-text" id="contact-info-about-text"></p>
+              <div id="contact-info-desc-form" class="contact-info-rename-form hidden">
+                <textarea id="contact-info-desc-input" class="input-field contact-info-desc-textarea" maxlength="512" rows="3" placeholder="Add group description"></textarea>
+                <div class="contact-info-desc-footer">
+                  <span id="contact-info-desc-counter" class="field-hint">512</span>
+                  <div class="contact-info-rename-actions">
+                    <button type="button" id="btn-contact-info-save-desc" class="btn btn-primary btn-sm">Save</button>
+                    <button type="button" id="btn-contact-info-cancel-desc" class="btn btn-secondary btn-sm">Cancel</button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Phone / Username Details Section (Direct chats, only if available) -->
@@ -857,27 +877,6 @@
               </div>
             </div>
 
-            <!-- Participants Section (Group chats only) -->
-            <div class="contact-info-section hidden" id="contact-info-participants-section">
-              <div class="contact-info-section-header">
-                <span class="contact-info-section-title" id="contact-info-participants-count">Participants</span>
-              </div>
-              <!-- WhatsApp-style Add people row (visible if authorized admin) -->
-              <div class="contact-info-add-participant-row hidden" id="btn-group-add-people" role="button" tabindex="0" aria-label="Add people">
-                <div class="avatar avatar-sm avatar-add-people">
-                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
-                </div>
-                <span class="contact-info-add-participant-label">Add people</span>
-              </div>
-              <div class="contact-info-participants-loading hidden" id="contact-info-participants-loading">
-                <span class="spinner spinner-sm"></span>
-                <span>Loading participants...</span>
-              </div>
-              <div class="contact-info-participants-list" id="contact-info-participants-list">
-                <!-- Safely rendered by app.js -->
-              </div>
-            </div>
-
             <!-- Media, links and docs row -->
             <div class="contact-info-nav-row" id="contact-info-media-row" role="button" tabindex="0" aria-label="Media, links and docs">
               <div class="contact-info-nav-row-left">
@@ -893,6 +892,7 @@
                 <span class="contact-info-nav-row-icon" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
                 <span class="contact-info-nav-row-label">Starred messages</span>
               </div>
+              <span class="contact-info-nav-row-value" id="contact-info-starred-count" style="font-size: 13px; color: var(--text-muted); margin-right: 6px;"></span>
               <span class="contact-info-nav-row-arrow" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
             </div>
 
@@ -936,6 +936,27 @@
                 <span class="contact-info-nav-row-label">Add to list</span>
               </div>
               <span class="contact-info-nav-row-arrow" aria-hidden="true"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+            </div>
+
+            <!-- Participants Section (Group chats only) -->
+            <div class="contact-info-section hidden" id="contact-info-participants-section">
+              <div class="contact-info-section-header">
+                <span class="contact-info-section-title" id="contact-info-participants-count">Participants</span>
+              </div>
+              <!-- WhatsApp-style Add people row (visible if authorized admin) -->
+              <div class="contact-info-add-participant-row hidden" id="btn-group-add-people" role="button" tabindex="0" aria-label="Add people">
+                <div class="avatar avatar-sm avatar-add-people">
+                  <svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+                </div>
+                <span class="contact-info-add-participant-label">Add people</span>
+              </div>
+              <div class="contact-info-participants-loading hidden" id="contact-info-participants-loading">
+                <span class="spinner spinner-sm"></span>
+                <span>Loading participants...</span>
+              </div>
+              <div class="contact-info-participants-list" id="contact-info-participants-list">
+                <!-- Safely rendered by app.js -->
+              </div>
             </div>
 
             <div class="contact-info-divider"></div>
@@ -1778,6 +1799,10 @@
       <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
       <span class="context-item-text">Search</span>
     </button>
+    <button type="button" class="context-menu-item" id="menu-item-starred-messages" data-action="starred-messages" role="menuitem">
+      <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
+      <span class="context-item-text">Starred messages</span>
+    </button>
     <button type="button" class="context-menu-item" id="menu-item-chat-theme" data-action="chat-theme" role="menuitem">
       <span class="context-item-icon"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13 0-.92.75-1.67 1.67-1.67h2c3.05 0 5.56-2.5 5.56-5.55C22 6.01 17.46 2 12 2z"/><circle cx="7.5" cy="11.5" r="1.2" fill="currentColor"/><circle cx="10" cy="7.5" r="1.2" fill="currentColor"/><circle cx="14" cy="7.5" r="1.2" fill="currentColor"/><circle cx="16.5" cy="11.5" r="1.2" fill="currentColor"/></svg></span>
       <span class="context-item-text">Chat theme</span>
@@ -2187,6 +2212,24 @@
       <div class="modal-footer">
         <button type="button" id="btn-confirm-cancel" class="btn btn-secondary btn-sm">Cancel</button>
         <button type="button" id="btn-confirm-proceed" class="btn btn-danger-sm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leave Group Confirmation Dialog (WhatsApp Style) -->
+  <div id="leave-group-confirm-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="leave-group-modal-title">
+    <div class="modal-card modal-card-sm">
+      <div class="modal-header">
+        <h3 id="leave-group-modal-title">Exit group?</h3>
+        <button type="button" id="btn-close-leave-group" class="btn-icon modal-close-btn" title="Cancel" aria-label="Cancel"><svg class="ui-icon ui-icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <p id="leave-group-modal-message">Are you sure you want to exit this group?</p>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button type="button" id="btn-leave-group-cancel" class="btn btn-secondary btn-sm">Cancel</button>
+        <button type="button" id="btn-leave-group-confirm" class="btn btn-secondary btn-sm">Exit</button>
+        <button type="button" id="btn-leave-group-delete" class="btn btn-danger-sm">Exit and delete</button>
       </div>
     </div>
   </div>

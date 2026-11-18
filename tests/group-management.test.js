@@ -124,17 +124,17 @@ describe('Group Management & Group Info Specification Tests', () => {
   // 2. Group Rename API & Contracts
   // ═════════════════════════════════════════════════════════════════
   describe('2. Group Rename Contract', () => {
-    test('updateGroup calls PATCH /rooms/{roomId} with name', async () => {
+    test('updateGroup calls PATCH /directory/conversations/{roomId} with name', async () => {
       const mockFetch = createMockFetch(200, { success: true });
       const api = new ChatApi({ baseUrl: 'https://api.ollacore.test', fetchFn: mockFetch });
 
-      const res = await api.updateGroup('tok_room_1', 'room_grp_99', { name: 'Renamed Project Alpha' });
+      const res = await api.updateGroup('tok_session_1', 'room_grp_99', { name: 'Renamed Project Alpha' });
       assert.equal(res.success, true);
       assert.equal(mockFetch.calls.length, 1);
-      assert.equal(mockFetch.calls[0].url, 'https://api.ollacore.test/rooms/room_grp_99');
+      assert.equal(mockFetch.calls[0].url, 'https://api.ollacore.test/directory/conversations/room_grp_99');
       assert.equal(mockFetch.calls[0].method, 'PATCH');
       assert.deepEqual(mockFetch.calls[0].body, { name: 'Renamed Project Alpha' });
-      assert.equal(mockFetch.calls[0].headers.Authorization, 'Bearer tok_room_1');
+      assert.equal(mockFetch.calls[0].headers.Authorization, 'Bearer tok_session_1');
     });
 
     test('updateGroup handles backend failure cleanly', async () => {
@@ -142,7 +142,7 @@ describe('Group Management & Group Info Specification Tests', () => {
       const api = new ChatApi({ baseUrl: 'https://api.ollacore.test', fetchFn: mockFetch });
 
       await assert.rejects(
-        async () => api.updateGroup('tok_room_1', 'room_grp_99', { name: 'Bad' }),
+        async () => api.updateGroup('tok_session_1', 'room_grp_99', { name: 'Bad' }),
         (err) => {
           assert.equal(err.httpStatus, 400);
           return true;

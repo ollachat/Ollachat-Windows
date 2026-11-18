@@ -233,7 +233,7 @@ class MockMediaElement {
   constructor() {
     this.srcObject = null;
   }
-  async play() {}
+  async play() { }
 }
 
 function createManager(options = {}) {
@@ -651,6 +651,8 @@ describe('1-to-1 Video Calling & Decline Regressions Suite', () => {
     assert.deepEqual(signals[0], {
       action: 'invite',
       roomId: 'room-signal-test',
+      callId: undefined,
+      callEpoch: manager.callEpoch,
       callType: 'video',
       isVideo: true
     });
@@ -671,7 +673,9 @@ describe('1-to-1 Video Calling & Decline Regressions Suite', () => {
     assert.equal(signals.length, 2);
     assert.deepEqual(signals[1], {
       action: 'cancel',
-      roomId: 'room-signal-cancel'
+      roomId: 'room-signal-cancel',
+      callId: undefined,
+      callEpoch: manager.callEpoch
     });
   });
 
@@ -696,7 +700,9 @@ describe('1-to-1 Video Calling & Decline Regressions Suite', () => {
     assert.equal(signals.length, 1);
     assert.deepEqual(signals[0], {
       action: 'decline',
-      roomId: 'room-signal-decline'
+      roomId: 'room-signal-decline',
+      callId: 'c7',
+      callEpoch: manager.callEpoch
     });
   });
 

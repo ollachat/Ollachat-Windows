@@ -273,20 +273,24 @@ describe('Persistent Application-Level Connection & Background Messaging Archite
   });
 
   test('8. Calling state machine invariants: caller remains OUTGOING_RINGING and duration is 00:00 until remote accepts', async () => {
-    const manager = new VoiceCallManager({
-      roomId: 'room-caller-1',
-      peerName: 'Alice'
-    });
+    const manager = new VoiceCallManager();
 
-    // Start outgoing voice call
+    // Establish a realistic active outgoing call instance before the remote decline.
+    manager.roomId = 'room-caller-1';
+    manager.peerName = 'Alice';
+    const callEpoch = manager._beginCallInstance({ callId: 'call-caller-1' });
     manager.state = CALL_STATE.OUTGOING_RINGING;
     manager._isIncoming = false;
 
     assert.equal(manager.state, CALL_STATE.OUTGOING_RINGING);
     assert.equal(manager.durationSec, 0);
 
-    // Remote decline
-    manager.handleRemoteCallEnded({ roomId: 'room-caller-1' });
+    // Remote decline for the current authoritative call instance.
+    await manager.handleRemoteCallEnded({
+      roomId: 'room-caller-1',
+      callId: 'call-caller-1',
+      callEpoch
+    });
     assert.equal(manager.state, CALL_STATE.REMOTE_DECLINED);
     assert.equal(manager.durationSec, 0, 'Duration timer must never start if call was not connected');
   });

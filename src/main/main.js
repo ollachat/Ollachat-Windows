@@ -36,6 +36,7 @@ import { shouldStartHidden, setAutoStart, isAutoStartEnabled } from './auto-star
 import { DatabaseService } from '../storage/db/database-service.js';
 import { UploadManager } from './upload-manager.js';
 import { ContactCacheService } from './contact-cache-service.js';
+import { normalizeRtcOwner, rtcOwnerMatches as ownerMatchesRequestedRtc } from './rtc-owner.js';
 
 const _dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +69,9 @@ let contactCacheService = null;
 let authController = null;
 let chatWebSocket = null;
 let rtcWebSocket = null;
+let rtcConnectGeneration = 0;
+let rtcRequestedOwner = null;
+let rtcConnectedOwner = null;
 let pendingProfilePhoto = null;
 let tray = null;
 let isQuitting = false;
@@ -267,7 +271,7 @@ function createWindow() {
         if (win && !win.isDestroyed()) {
           setFloatingCallMode('detailed');
           win.show();
-          try { win.setAlwaysOnTop(true, 'screen-saver'); } catch {}
+          try { win.setAlwaysOnTop(true, 'screen-saver'); } catch { }
           if (currentFloatingCallState) {
             win.webContents.send('floating-call:state-changed', currentFloatingCallState);
           }
@@ -282,7 +286,7 @@ function createWindow() {
       if (win && !win.isDestroyed()) {
         setFloatingCallMode('detailed');
         win.show();
-        try { win.setAlwaysOnTop(true, 'screen-saver'); } catch {}
+        try { win.setAlwaysOnTop(true, 'screen-saver'); } catch { }
         if (currentFloatingCallState) {
           win.webContents.send('floating-call:state-changed', currentFloatingCallState);
         }
@@ -417,7 +421,7 @@ function getOrCreateFloatingCallWindow() {
   try {
     floatingCallWindow.setAlwaysOnTop(true, 'screen-saver');
     floatingCallWindow.setVisibleOnAllWorkspaces?.(true);
-  } catch {}
+  } catch { }
 
   const floatingHtmlPath = path.join(_dirname, '../renderer/floating-call.html');
   floatingCallWindow.loadFile(floatingHtmlPath);
@@ -430,7 +434,7 @@ function getOrCreateFloatingCallWindow() {
     if (floatingCallWindow && !floatingCallWindow.isDestroyed()) {
       try {
         floatingCallWindow.setAlwaysOnTop(true, 'screen-saver');
-      } catch {}
+      } catch { }
       floatingCallWindow.webContents.send('floating-call:maximized-state', false);
     }
   });
@@ -490,7 +494,7 @@ function createTray() {
           chatWebSocket.disconnect();
         }
         if (rtcWebSocket) {
-          try { rtcWebSocket.disconnect(); } catch {}
+          try { rtcWebSocket.disconnect(); } catch { }
         }
         app.quit();
       }
@@ -827,7 +831,7 @@ ipcMain.handle('session:set-onboarding-done', async (_event, done) => {
 
 ipcMain.handle('session:clear', async () => {
   if (databaseService?.databaseManager) {
-    await databaseService.databaseManager.close().catch(() => {});
+    await databaseService.databaseManager.close().catch(() => { });
   }
   if (!sessionStore) return null;
   return sessionStore.clear();
@@ -1288,13 +1292,32 @@ ipcMain.handle('chat:get-state', () => {
   return chatWebSocket.state;
 });
 
+const CHAT_SEND_ERROR_MESSAGES = Object.freeze({
+  chat_websocket_unavailable: 'Chat WebSocket is unavailable',
+  room_required: 'A room is required for this send',
+  room_socket_absent: 'No WebSocket entry exists for the requested room',
+  room_socket_error: 'The requested room WebSocket is in an error state',
+  room_socket_not_connected: 'The requested room WebSocket is not connected',
+  socket_send_failed: 'The requested room WebSocket could not send the frame',
+  chat_send_failed: 'The chat frame could not be sent'
+});
+
 ipcMain.handle('chat:send', (_event, { type, payload = {}, roomId = null, requestId = null }) => {
-  if (!chatWebSocket) return { ok: false, error: 'Chat WebSocket not initialized' };
+  if (!chatWebSocket) {
+    return {
+      ok: false,
+      code: 'chat_websocket_unavailable',
+      error: CHAT_SEND_ERROR_MESSAGES.chat_websocket_unavailable
+    };
+  }
   try {
     const assignedRequestId = chatWebSocket.send(type, payload, roomId, requestId);
     return { ok: true, requestId: assignedRequestId };
   } catch (err) {
-    return { ok: false, error: err.message };
+    const code = Object.hasOwn(CHAT_SEND_ERROR_MESSAGES, err?.code)
+      ? err.code
+      : 'chat_send_failed';
+    return { ok: false, code, error: CHAT_SEND_ERROR_MESSAGES[code] };
   }
 });
 
@@ -1331,7 +1354,7 @@ ipcMain.handle('chat:mark-delivered', async (_event, { roomId, messageId }) => {
     try {
       chatWebSocket.markDelivered(roomId, messageId);
       wsSent = true;
-    } catch (_) {}
+    } catch (_) { }
   }
   if (!wsSent && chatApi) {
     try {
@@ -1352,7 +1375,7 @@ const inflightMarkReadRest = new Map();
 ipcMain.handle('chat:mark-read', async (_event, { roomId, messageId }) => {
   if (!roomId || !messageId) return { ok: false, error: 'roomId and messageId required' };
   let wsSent = false;
-  if (chatWebSocket && chatWebSocket.state === 'connected') {
+  if (chatWebSocket && (chatWebSocket.state === 'connected' || chatWebSocket.getRoomState?.(roomId) === 'connected')) {
     try {
       chatWebSocket.markRead(roomId, messageId);
       wsSent = true;
@@ -1464,8 +1487,26 @@ ipcMain.handle('chat:remove-reaction', async (_event, { roomId, messageId, emoji
 });
 
 // RTC WebSocket Signaling Handlers (Phase 6A/B/C)
+function rtcOwnerMatches(owner = {}) {
+  return ownerMatchesRequestedRtc(owner, rtcRequestedOwner);
+}
+
+function rtcOwnerDiagnostic(owner = {}) {
+  const normalized = normalizeRtcOwner(owner);
+  return {
+    hasOwnerId: Boolean(normalized.ownerId),
+    hasCallId: Boolean(normalized.callId),
+    hasRoomId: Boolean(normalized.roomId),
+    callEpoch: normalized.callEpoch,
+    generation: normalized.generation
+  };
+}
+
 ipcMain.handle('rtc:connect', async (_event, roomIdOrOptions, maybeOptions = {}) => {
   if (!rtcWebSocket) return { ok: false, error: 'RTC WebSocket not initialized' };
+  const options = typeof roomIdOrOptions === 'object' && roomIdOrOptions !== null
+    ? roomIdOrOptions
+    : maybeOptions;
   const rawRoomId = typeof roomIdOrOptions === 'object' && roomIdOrOptions !== null
     ? roomIdOrOptions.roomId
     : roomIdOrOptions;
@@ -1473,41 +1514,55 @@ ipcMain.handle('rtc:connect', async (_event, roomIdOrOptions, maybeOptions = {})
     return { ok: false, error: 'roomId is required to connect RTC WebSocket' };
   }
   const cleanRoomId = rawRoomId.trim();
-  const callType = (typeof roomIdOrOptions === 'object' && roomIdOrOptions !== null
-    ? (roomIdOrOptions.callType || (roomIdOrOptions.isVideo ? 'video' : 'voice'))
-    : (maybeOptions.callType || (maybeOptions.isVideo ? 'video' : 'voice'))) || 'voice';
+  const callType = (options.callType || (options.isVideo ? 'video' : 'voice')) || 'voice';
+  const generation = ++rtcConnectGeneration;
+  const owner = normalizeRtcOwner(options, cleanRoomId, generation);
+  rtcRequestedOwner = owner;
+  rtcConnectedOwner = null;
+  // Invalidate any older pending/connected socket before awaiting this owner's token.
+  rtcWebSocket.disconnect();
+  console.log('[main][rtc] Connect requested', rtcOwnerDiagnostic(owner));
 
   try {
     const sessionToken = getAuthenticatedSessionToken();
     const deviceId = getDeviceId();
 
-    // Fetch room token and rtc_websocket_url using directory session
+    // Fetch room token and rtc_websocket_url using directory session.
     const roomTokenData = await chatApi.getRoomToken(sessionToken, cleanRoomId, deviceId);
+    if (generation !== rtcConnectGeneration || rtcRequestedOwner?.generation !== generation) {
+      return { ok: false, error: 'RTC connect request superseded', superseded: true };
+    }
     const roomAccessToken = roomTokenData?.access_token;
     if (!roomAccessToken) {
       throw new Error('Failed to resolve room token for RTC signaling');
     }
     const rtcUrl = roomTokenData?.rtc_websocket_url || undefined;
 
-    // Room scoping: disconnect any prior room RTC connection
-    if (rtcWebSocket.roomId && rtcWebSocket.roomId !== cleanRoomId) {
-      rtcWebSocket.disconnect();
-    }
-
     await rtcWebSocket.connect({
       roomId: cleanRoomId,
       token: roomAccessToken,
       url: rtcUrl
     });
+    if (generation !== rtcConnectGeneration || rtcRequestedOwner?.generation !== generation) {
+      return { ok: false, error: 'RTC connect request superseded', superseded: true };
+    }
+    rtcConnectedOwner = owner;
+    console.log('[main][rtc] Connect completed', rtcOwnerDiagnostic(owner));
 
     return {
       ok: true,
       state: rtcWebSocket.state,
       roomId: cleanRoomId,
       callType,
+      callEpoch: owner.callEpoch,
+      ownerId: owner.ownerId,
+      connectionGeneration: generation,
       iceServers: roomTokenData?.ice_servers || []
     };
   } catch (err) {
+    if (generation !== rtcConnectGeneration) {
+      return { ok: false, error: 'RTC connect request superseded', superseded: true };
+    }
     return { ok: false, error: err.message, state: rtcWebSocket?.state || 'error' };
   }
 });
@@ -1526,9 +1581,16 @@ ipcMain.handle('rtc:get-ice-servers', async (_event, roomId) => {
   }
 });
 
-ipcMain.handle('rtc:disconnect', () => {
+ipcMain.handle('rtc:disconnect', (_event, owner = {}) => {
   if (!rtcWebSocket) return { ok: false };
+  if (!rtcOwnerMatches(owner)) {
+    console.log('[main][rtc] Ignored stale disconnect', rtcOwnerDiagnostic(owner));
+    return { ok: false, staleOwner: true, state: rtcWebSocket.state };
+  }
+  ++rtcConnectGeneration;
   rtcWebSocket.disconnect();
+  rtcRequestedOwner = null;
+  rtcConnectedOwner = null;
   return { ok: true, state: rtcWebSocket.state };
 });
 
@@ -1567,8 +1629,12 @@ ipcMain.handle('rtc:send-candidate', (_event, { candidate, sdpMid, sdpMLineIndex
   }
 });
 
-ipcMain.handle('rtc:leave', () => {
+ipcMain.handle('rtc:leave', (_event, owner = {}) => {
   if (!rtcWebSocket) return { ok: false, error: 'RTC WebSocket not initialized' };
+  if (!rtcOwnerMatches(owner)) {
+    console.log('[main][rtc] Ignored stale leave', rtcOwnerDiagnostic(owner));
+    return { ok: false, staleOwner: true };
+  }
   try {
     rtcWebSocket.sendLeave();
     return { ok: true };
@@ -1585,7 +1651,7 @@ ipcMain.handle('floating-call:show', () => {
     const workArea = primaryDisplay ? primaryDisplay.workArea : { x: 0, y: 0, width: 1024, height: 768 };
     const bounds = win.getBounds();
     if (bounds.x < workArea.x || bounds.x + bounds.width > workArea.x + workArea.width ||
-        bounds.y < workArea.y || bounds.y + bounds.height > workArea.y + workArea.height) {
+      bounds.y < workArea.y || bounds.y + bounds.height > workArea.y + workArea.height) {
       const newX = Math.max(workArea.x + 10, Math.round(workArea.x + (workArea.width - bounds.width) / 2));
       const newY = Math.max(workArea.y + 10, Math.round(workArea.y + (workArea.height - bounds.height) / 2));
       win.setPosition(newX, newY);
@@ -1595,7 +1661,7 @@ ipcMain.handle('floating-call:show', () => {
     try {
       win.setAlwaysOnTop(true, 'screen-saver');
       win.focus();
-    } catch {}
+    } catch { }
     if (currentFloatingCallState) {
       win.webContents.send('floating-call:state-changed', currentFloatingCallState);
     }
@@ -1706,7 +1772,7 @@ ipcMain.handle('floating-call:sync-state', (_event, state) => {
       floatingCallWindow.show();
       try {
         floatingCallWindow.setAlwaysOnTop(true, 'screen-saver');
-      } catch {}
+      } catch { }
     }
   }
   return { ok: true };
@@ -1720,7 +1786,7 @@ ipcMain.handle('floating-call:action', (_event, action) => {
     setFloatingCallMode('detailed');
     if (floatingCallWindow && !floatingCallWindow.isDestroyed()) {
       floatingCallWindow.show();
-      try { floatingCallWindow.setAlwaysOnTop(true, 'screen-saver'); } catch {}
+      try { floatingCallWindow.setAlwaysOnTop(true, 'screen-saver'); } catch { }
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('floating-call:dispatch-action', 'restore');
@@ -1750,7 +1816,7 @@ ipcMain.handle('floating-call:bridge-signal', (_event, signal) => {
               for (const sig of queue) {
                 try {
                   floatingCallWindow.webContents.send('floating-call:bridge-signal', sig);
-                } catch (_) {}
+                } catch (_) { }
               }
             }
           });
@@ -1851,7 +1917,7 @@ ipcMain.handle('chat-api:open-direct', async (_event, peerUserId) => {
     const data = await chatApi.openDirectConversation(token, peerUserId);
     const newRoomId = data?.roomId || data?.room_id;
     if (chatWebSocket && newRoomId) {
-      chatWebSocket.connectRoom(newRoomId).catch(() => {});
+      chatWebSocket.connectRoom(newRoomId).catch(() => { });
     }
     return { ok: true, data };
   } catch (err) {
@@ -1868,7 +1934,7 @@ ipcMain.handle('chat-api:create-group', async (_event, name, memberUserIds = [])
     const data = await chatApi.createGroupConversation(token, { name, memberUserIds });
     const newRoomId = data?.roomId || data?.room_id;
     if (chatWebSocket && newRoomId) {
-      chatWebSocket.connectRoom(newRoomId).catch(() => {});
+      chatWebSocket.connectRoom(newRoomId).catch(() => { });
     }
     return { ok: true, data };
   } catch (err) {
@@ -2052,9 +2118,7 @@ ipcMain.handle('chat-api:get-participants', async (_event, roomId) => {
 ipcMain.handle('chat-api:update-group', async (_event, roomId, updates = {}) => {
   try {
     const token = getAuthenticatedSessionToken();
-    const deviceId = getDeviceId();
-    const roomToken = await chatApi.resolveRoomToken(token, roomId, deviceId);
-    const data = await chatApi.updateGroup(roomToken, roomId, updates);
+    const data = await chatApi.updateGroup(token, roomId, updates);
     return { ok: true, data };
   } catch (err) {
     return {
@@ -2386,7 +2450,7 @@ ipcMain.handle('chat-api:upload-media', async (event, payload = {}) => {
     const mime = validation.effectiveMime;
     const kind = validation.kind;
 
-        const uploadRes = await uploadManager.uploadMedia({
+    const uploadRes = await uploadManager.uploadMedia({
       roomToken,
       roomId,
       filePath: targetFilePath,
@@ -2540,7 +2604,7 @@ ipcMain.handle('theme:delete-wallpaper', async (_event, localPath) => {
     if (!resolved.startsWith(wallpaperDir)) {
       return { ok: false, error: 'Access denied: path outside wallpaper directory' };
     }
-    await fsPromises.unlink(resolved).catch(() => {});
+    await fsPromises.unlink(resolved).catch(() => { });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -2956,13 +3020,26 @@ app.whenReady().then(async () => {
 
   rtcWebSocket.on('state_change', (data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('rtc:state-change', data);
+      const owner = rtcConnectedOwner || rtcRequestedOwner;
+      mainWindow.webContents.send('rtc:state-change', {
+        ...data,
+        callEpoch: owner?.callEpoch ?? null,
+        ownerId: owner?.ownerId ?? null,
+        connectionGeneration: owner?.generation ?? null
+      });
     }
   });
 
   rtcWebSocket.on('event', (data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('rtc:event', data);
+      const owner = rtcConnectedOwner || rtcRequestedOwner;
+      mainWindow.webContents.send('rtc:event', {
+        ...data,
+        callEpoch: owner?.callEpoch ?? null,
+        callId: owner?.callId ?? null,
+        ownerId: owner?.ownerId ?? null,
+        connectionGeneration: owner?.generation ?? null
+      });
     }
   });
 
@@ -3014,10 +3091,10 @@ app.on('before-quit', () => {
     chatWebSocket.disconnect();
   }
   if (rtcWebSocket) {
-    try { rtcWebSocket.disconnect(); } catch {}
+    try { rtcWebSocket.disconnect(); } catch { }
   }
   if (databaseService?.databaseManager) {
-    try { databaseService.databaseManager.close(); } catch {}
+    try { databaseService.databaseManager.close(); } catch { }
   }
 });
 
@@ -3038,7 +3115,7 @@ const handleTerminationSignal = () => {
     chatWebSocket.disconnect();
   }
   if (rtcWebSocket) {
-    try { rtcWebSocket.disconnect(); } catch {}
+    try { rtcWebSocket.disconnect(); } catch { }
   }
   if (databaseService?.databaseManager) {
     try {
@@ -3046,7 +3123,7 @@ const handleTerminationSignal = () => {
         process.exit(0);
       });
       return;
-    } catch {}
+    } catch { }
   }
   process.exit(0);
 };

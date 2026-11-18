@@ -3,15 +3,18 @@ import assert from 'node:assert/strict';
 import { VoiceCallManager, CALL_STATE } from '../src/call/voice-call-manager.js';
 import { RtcWebSocket } from '../src/call/rtc-websocket.js';
 import { ChatWebSocket } from '../src/chat/chat-websocket.js';
+import { scheduleCallPresentation } from '../src/renderer/call-presentation-guard.js';
 
 class MockTrack {
   constructor(kind = 'audio') {
     this.kind = kind;
     this.enabled = true;
     this.stopped = false;
+    this.readyState = 'live';
   }
   stop() {
     this.stopped = true;
+    this.readyState = 'ended';
   }
 }
 
@@ -465,8 +468,16 @@ describe('WhatsApp-style Calling UX & Modality State Machine', () => {
     manager._handleIncomingOffer('v=0\r\nm=audio 9 UDP/SAVPF\r\n', { isVideo: false, callType: 'voice' });
     assert.equal(manager.state, CALL_STATE.INCOMING_RINGING);
 
-    // Accept call answers the preserved offer and transitions to CONNECTED
+    // Accept answers the preserved offer, but SDP alone remains CONNECTING.
     await manager.acceptCall();
+    assert.equal(manager.state, CALL_STATE.CONNECTING);
+    assert.equal(manager.callConnectedAt, null);
+
+    const remoteAudioTrack = new MockTrack('audio');
+    manager.peerConnection.ontrack({
+      track: remoteAudioTrack,
+      streams: [new MockMediaStream([remoteAudioTrack])]
+    });
     assert.equal(manager.state, CALL_STATE.CONNECTED);
 
     const ui = computeCallUiState(manager);
@@ -492,12 +503,20 @@ describe('WhatsApp-style Calling UX & Modality State Machine', () => {
     manager._handleIncomingOffer('v=0\r\nm=audio 9\r\nm=video 9\r\n', { isVideo: true, callType: 'video' });
     assert.equal(manager.state, CALL_STATE.INCOMING_RINGING);
 
-    // Accept call triggers getUserMedia with video
+    // Accept triggers getUserMedia with video, but SDP alone remains CONNECTING.
     await manager.acceptCall();
-    assert.equal(manager.state, CALL_STATE.CONNECTED);
+    assert.equal(manager.state, CALL_STATE.CONNECTING);
+    assert.equal(manager.callConnectedAt, null);
     assert.equal(manager.isVideo, true);
     assert.equal(mediaDevices.getUserMediaCalls.length, 1);
     assert.equal(mediaDevices.getUserMediaCalls[0].video, true, 'Acquires camera on video accept');
+
+    const remoteVideoTrack = new MockTrack('video');
+    manager.peerConnection.ontrack({
+      track: remoteVideoTrack,
+      streams: [new MockMediaStream([remoteVideoTrack])]
+    });
+    assert.equal(manager.state, CALL_STATE.CONNECTED);
 
     const ui = computeCallUiState(manager);
     assert.equal(ui.statusText, 'Connected');
@@ -753,6 +772,44 @@ describe('WhatsApp-style Calling UX & Modality State Machine', () => {
     assert.equal(emitted.callType, 'video');
     assert.equal(emitted.isVideo, true);
     assert.equal(emitted.callId, 'call-101');
+  });
+
+  test('old presentation callbacks cannot mutate a newer call', () => {
+    const manager = new VoiceCallManager();
+    manager._beginCallInstance({ callId: 'call-old' });
+    let scheduledCallback = null;
+    let label = 'Old call notice';
+
+    scheduleCallPresentation(manager, () => {
+      label = 'Connected';
+    }, 3000, (callback) => {
+      scheduledCallback = callback;
+      return 1;
+    });
+
+    manager._beginCallInstance({ callId: 'call-new' });
+    label = 'New call status';
+    scheduledCallback();
+
+    assert.equal(label, 'New call status');
+  });
+
+  test('current-call presentation callbacks still mutate current UI', () => {
+    const manager = new VoiceCallManager();
+    manager._beginCallInstance({ callId: 'call-current' });
+    let scheduledCallback = null;
+    let bannerHidden = false;
+
+    scheduleCallPresentation(manager, () => {
+      bannerHidden = true;
+    }, 4000, (callback) => {
+      scheduledCallback = callback;
+      return 1;
+    });
+
+    scheduledCallback();
+
+    assert.equal(bannerHidden, true);
   });
 
 });

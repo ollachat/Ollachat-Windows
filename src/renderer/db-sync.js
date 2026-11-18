@@ -62,6 +62,12 @@ export function sqliteRowToConversation(row) {
     peer_display_name: peerDisplayName,
     lastMessage,
     preview: lastMessagePreview,
+    lastMessageId,
+    last_message_id: lastMessageId,
+    lastMessageTime,
+    last_message_time: lastMessageTime,
+    lastEventSeq,
+    last_event_seq: lastEventSeq,
     unreadCount,
     unread_count: unreadCount,
     isArchived: Boolean(row.is_archived),
@@ -74,6 +80,9 @@ export function sqliteRowToConversation(row) {
     is_favourite: Boolean(row.is_favourite),
     isMarkedUnread: Boolean(row.is_marked_unread),
     is_marked_unread: Boolean(row.is_marked_unread),
+    isExited: Boolean(row.is_exited),
+    is_exited: Boolean(row.is_exited),
+    exited: Boolean(row.is_exited),
     draftText: row.draft_text || null,
     draft_text: row.draft_text || null,
     createdAt: row.created_at || new Date().toISOString(),
@@ -116,6 +125,8 @@ export function conversationToSqlitePayload(conv) {
     pinnedOrder: Number.isInteger(conv.pinnedOrder ?? conv.pinned_order) ? (conv.pinnedOrder ?? conv.pinned_order) : 0,
     isFavourite: conv.isFavourite || conv.is_favourite ? 1 : 0,
     isMarkedUnread: conv.isMarkedUnread || conv.is_marked_unread ? 1 : 0,
+    isExited: (conv.isExited || conv.is_exited || conv.exited) ? 1 : 0,
+    is_exited: (conv.isExited || conv.is_exited || conv.exited) ? 1 : 0,
     draftText: conv.draftText || conv.draft_text || null,
     createdAt: conv.createdAt || conv.created_at || new Date().toISOString(),
     updatedAt: conv.updatedAt || conv.updated_at || new Date().toISOString()
@@ -403,6 +414,24 @@ export async function persistConversationToDb(conv) {
 }
 
 /**
+ * Deletes a conversation from SQLite in the background.
+ * @param {string} roomId
+ * @returns {Promise<boolean>}
+ */
+export async function deleteConversationFromDb(roomId) {
+  if (!roomId) return false;
+  const db = window?.ollacoreDesktop?.db;
+  if (!db?.deleteConversation) return false;
+  try {
+    await db.deleteConversation(roomId);
+    return true;
+  } catch (err) {
+    console.warn('[DbSync] Failed to delete conversation from SQLite:', err);
+    return false;
+  }
+}
+
+/**
  * Persists an array of conversations to SQLite in the background.
  * @param {Array<object>} conversations
  * @returns {Promise<number>} Number of successfully persisted conversations
@@ -597,6 +626,45 @@ export async function persistMessageDeletedForMeToDb(id) {
     return true;
   } catch (err) {
     console.warn('[DbSync] Failed to mark message deleted for me in SQLite:', err);
+    return false;
+  }
+}
+
+/**
+ * Loads starred messages from SQLite for a specific room or across all rooms.
+ * @param {string|null} [roomId=null]
+ * @param {object} [options={}]
+ * @returns {Promise<Array<object>>}
+ */
+export async function loadStarredMessagesFromDb(roomId = null, options = {}) {
+  const db = window?.ollacoreDesktop?.db;
+  if (!db?.getStarredMessages) return [];
+  try {
+    const rows = await db.getStarredMessages({ roomId, ...options });
+    if (!Array.isArray(rows)) return [];
+    return rows.map(sqliteRowToMessage).filter(Boolean);
+  } catch (err) {
+    console.warn('[DbSync] Failed to load starred messages from SQLite:', err);
+    return [];
+  }
+}
+
+/**
+ * Persists message starred/unstarred state to SQLite in the background.
+ * @param {string} messageId
+ * @param {boolean} [isStarred=true]
+ * @param {string|null} [roomId=null]
+ * @returns {Promise<boolean>}
+ */
+export async function persistMessageStarredToDb(messageId, isStarred = true, roomId = null) {
+  if (!messageId) return false;
+  const db = window?.ollacoreDesktop?.db;
+  if (!db?.updateMessageStarred) return false;
+  try {
+    const res = await db.updateMessageStarred({ messageId, isStarred, roomId });
+    return res?.ok === true;
+  } catch (err) {
+    console.warn('[DbSync] Failed to update message starred in SQLite:', err);
     return false;
   }
 }

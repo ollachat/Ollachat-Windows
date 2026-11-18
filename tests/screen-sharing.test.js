@@ -102,6 +102,7 @@ class MockRTCPeerConnection {
     this.isClosed = false;
     this.localDescription = null;
     this.remoteDescription = null;
+    this.signalingState = 'stable';
   }
 
   addTrack(track, stream) {
@@ -136,10 +137,14 @@ class MockRTCPeerConnection {
 
   async setLocalDescription(desc) {
     this.localDescription = desc;
+    if (desc.type === 'offer') this.signalingState = 'have-local-offer';
+    if (desc.type === 'answer') this.signalingState = 'stable';
   }
 
   async setRemoteDescription(desc) {
     this.remoteDescription = desc;
+    if (desc.type === 'offer') this.signalingState = 'have-remote-offer';
+    if (desc.type === 'answer') this.signalingState = 'stable';
   }
 
   close() {
@@ -152,20 +157,20 @@ describe('OllaChat Windows Screen Sharing (Phase 1)', () => {
     const mediaDevices = new MockMediaDevices();
     const rtcBridge = {
       connect: async () => ({ ok: true }),
-      disconnect: () => {},
-      sendOffer: async () => {},
-      sendAnswer: async () => {},
-      sendCandidate: async () => {},
-      leave: async () => {},
+      disconnect: () => { },
+      sendOffer: async () => { },
+      sendAnswer: async () => { },
+      sendCandidate: async () => { },
+      leave: async () => { },
       getState: async () => 'connected',
-      onEvent: () => () => {}
+      onEvent: () => () => { }
     };
 
     const manager = new VoiceCallManager({
       mediaDevices,
       rtcBridge,
       PeerConnectionClass: MockRTCPeerConnection,
-      sendSignal: () => {}
+      sendSignal: () => { }
     });
 
     // Start video call and transition to connected
@@ -451,6 +456,7 @@ describe('OllaChat Windows Screen Sharing (Phase 1)', () => {
     let rtcPeerConnectionInstance = null;
     let sentOffers = [];
 
+    let rtcListener = null;
     const rtcBridge = {
       connect: async () => ({ ok: true, iceServers: [] }),
       sendOffer: async (sdp, options) => {
@@ -460,19 +466,30 @@ describe('OllaChat Windows Screen Sharing (Phase 1)', () => {
       sendAnswer: async () => ({ ok: true }),
       leave: async () => ({ ok: true }),
       getState: async () => 'connected',
-      on: () => () => {}
+      onEvent: (listener) => {
+        rtcListener = listener;
+        return () => { rtcListener = null; };
+      }
     };
 
     const manager = new VoiceCallManager({
       mediaDevices,
       rtcBridge,
       PeerConnectionClass: MockRTCPeerConnection,
-      sendSignal: () => {}
+      sendSignal: () => { }
     });
 
     await manager.startCall('room-audio-screen-1', 'Charlie');
-    manager._setState(CALL_STATE.CONNECTING);
-    manager._setState(CALL_STATE.CONNECTED);
+    await rtcListener({
+      type: 'answer',
+      sdp: 'v=0\r\no=initial-publication-answer\r\n',
+      roomId: 'room-audio-screen-1'
+    });
+    manager.handleCallAccepted({ roomId: 'room-audio-screen-1' });
+    manager.peerConnection.ontrack({
+      track: new MockTrack('audio'),
+      streams: [new MockMediaStream([new MockTrack('audio')])]
+    });
 
     assert.equal(manager.isVideo, false);
     assert.equal(manager.isScreenSharing, false);

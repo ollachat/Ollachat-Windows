@@ -125,7 +125,7 @@ describe('DatabaseManager & SQLite Foundation Tests', () => {
       await dbManager.openUserDatabase('user_schema');
 
       const version = await dbManager.getCurrentSchemaVersion();
-      assert.equal(version, 5);
+      assert.equal(version, 6);
 
       const tables = await dbManager.all("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name ASC;");
       const tableNames = tables.map((t) => t.name);
@@ -171,9 +171,9 @@ describe('DatabaseManager & SQLite Foundation Tests', () => {
       );
       await v1Manager.close();
 
-      // Now open with full dbManager (has v1, v2, v3, v4, v5)
+      // Now open with full dbManager (has v1, v2, v3, v4, v5, v6)
       await dbManager.openUserDatabase('user_upgrade_v1_v2');
-      assert.equal(await dbManager.getCurrentSchemaVersion(), 5);
+      assert.equal(await dbManager.getCurrentSchemaVersion(), 6);
 
       // Verify data is completely preserved
       const conv = await dbManager.get('SELECT room_name FROM conversations WHERE room_id = ?;', ['room_v1']);

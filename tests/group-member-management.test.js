@@ -399,8 +399,9 @@ describe('OllaChat Windows — Group Member Management (Phase 4 Full Spec)', () 
       assert.ok(appJs.includes("formatBackendGroupError('Add member', err)"));
     });
 
-    test('app.js protects sole owner from exiting group while other members remain', () => {
-      assert.ok(appJs.includes('You are the only owner of this group. Please promote another member to owner before leaving.'));
+    test('app.js allows sole owner to exit group delegating succession to backend leaveGroup API', () => {
+      assert.ok(!appJs.includes('You are the only owner of this group. Please promote another member to owner before leaving.'));
+      assert.ok(appJs.includes('window.ollacoreDesktop.chatApi.leaveGroup(targetRoomId)'));
     });
 
     test('ChatShellState setRoomParticipants replaces stale cache when a member is removed', () => {

@@ -530,6 +530,47 @@ describe('Real-Time Chat WebSocket Layer', () => {
       ws.disconnect();
     });
 
+    test('dispatches member.added, member.updated, and member.removed frames', async () => {
+      const ws = new ChatWebSocket({
+        token: 'token_123',
+        WebSocketClass: MockWebSocket
+      });
+
+      await ws.connect();
+      const mockSocket = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+      mockSocket.simulateOpen();
+
+      let memberAdded = null;
+      let memberUpdated = null;
+      let memberRemoved = null;
+
+      ws.on('member.added', (e) => { memberAdded = e; });
+      ws.on('member.updated', (e) => { memberUpdated = e; });
+      ws.on('member.removed', (e) => { memberRemoved = e; });
+
+      mockSocket.simulateMessage({
+        type: 'member.added',
+        room_id: 'group_room_1',
+        payload: { principal_id: 'user_b', role: 'member' }
+      });
+      mockSocket.simulateMessage({
+        type: 'member.updated',
+        room_id: 'group_room_1',
+        payload: { principal_id: 'user_b', role: 'owner' }
+      });
+      mockSocket.simulateMessage({
+        type: 'member.removed',
+        room_id: 'group_room_1',
+        payload: { principal_id: 'user_a' }
+      });
+
+      assert.deepEqual(memberAdded, { roomId: 'group_room_1', principalId: 'user_b', role: 'member' });
+      assert.deepEqual(memberUpdated, { roomId: 'group_room_1', principalId: 'user_b', role: 'owner' });
+      assert.deepEqual(memberRemoved, { roomId: 'group_room_1', principalId: 'user_a' });
+
+      ws.disconnect();
+    });
+
     test('dispatches ack, error, and pong frames', async () => {
       const ws = new ChatWebSocket({
         token: 'token_123',

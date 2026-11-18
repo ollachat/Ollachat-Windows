@@ -343,7 +343,7 @@ export class ChatWebSocket extends SimpleEventEmitter {
       } else if (typeof socket.close === 'function') {
         socket.close(code, reason);
       }
-    } catch {}
+    } catch { }
   }
 
   /**
@@ -568,7 +568,7 @@ export class ChatWebSocket extends SimpleEventEmitter {
             this._handleRoomUnexpectedClose(entry, 1006, 'Pong timeout');
           }
         }, this.heartbeatTimeoutMs);
-      } catch {}
+      } catch { }
     }, this.heartbeatIntervalMs);
   }
 
@@ -858,30 +858,49 @@ export class ChatWebSocket extends SimpleEventEmitter {
     // Sequence tracking & duplicate discarding per room strictly applies to new message creation events
     const isSequenceTracked = type === 'message.created' && eventSeq > 0;
     const effectiveRoomId = room_id || frame.roomId || payload.room_id || payload.roomId;
+    const callAction = payload?.body?.call_signal || (type === 'call.started' ? 'invite' : null);
+    const callModality = payload?.body?.call_type || payload?.call_type || frame?.call_type || null;
+    const logCallSequenceDecision = (decision) => {
+      if (!callAction) return;
+      console.info('[ChatWebSocket] CALL_SEQUENCE', {
+        stage: 'incoming_transport_sequence',
+        action: callAction,
+        modality: callModality,
+        sequence: eventSeq || null,
+        decision
+      });
+    };
 
     if (isSequenceTracked && effectiveRoomId) {
       if (!this.roomCursors.has(effectiveRoomId)) {
         // Uninitialized cursor: initialize to first event sequence without treating as gap
         this.setRoomCursor(effectiveRoomId, eventSeq);
+        logCallSequenceDecision('initialized');
       } else {
         const currentCursor = this.getRoomCursor(effectiveRoomId);
         if (eventSeq <= currentCursor) {
           // Duplicate event: safely discard
+          logCallSequenceDecision('duplicate_suppressed');
           this.emit('duplicate', { roomId: effectiveRoomId, eventSeq, currentCursor, frame });
           return;
         } else if (eventSeq > currentCursor + 1) {
           // Sequence gap: emit gap and resync signals
           const expectedSeq = currentCursor + 1;
+          logCallSequenceDecision('gap_resync');
           this.emit('gap', { roomId: effectiveRoomId, expectedSeq, receivedSeq: eventSeq });
           this.emit('resync', { roomId: effectiveRoomId, expectedSeq, receivedSeq: eventSeq });
           this.setRoomCursor(effectiveRoomId, eventSeq);
         } else {
           // In-order event: advance cursor
+          logCallSequenceDecision('accepted_in_order');
           this.setRoomCursor(effectiveRoomId, eventSeq);
         }
       }
     } else if (isSequenceTracked && eventSeq > this._highestSeq) {
       this._highestSeq = eventSeq;
+      logCallSequenceDecision('accepted_global');
+    } else {
+      logCallSequenceDecision('not_sequence_tracked');
     }
 
     const mappedCid = request_id ? this._requestIdToClientMessageId?.get(request_id) : null;
@@ -896,10 +915,6 @@ export class ChatWebSocket extends SimpleEventEmitter {
 
     // Always emit the generic frame for non-duplicate events
     this.emit('frame', frame);
-
-    if (type === 'ack' || type === 'message.created' || type === 'error' || type === 'pong') {
-      console.log('[CHECKPOINT 13] Incoming frame received from server:', { type, requestId: request_id, roomId: room_id });
-    }
 
     switch (type) {
       case 'ack': {
@@ -1000,19 +1015,58 @@ export class ChatWebSocket extends SimpleEventEmitter {
         });
         break;
 
-      case 'member.added':
-        this.emit('member.added', {
-          roomId: room_id || '',
-          principalId: payload.principal_id || ''
-        });
+      case 'member.added': {
+        const addedData = {
+          roomId: room_id || frame.roomId || payload.room_id || payload.roomId || '',
+          principalId: payload.principal_id || payload.principalId || payload.user_id || payload.userId || frame.principal_id || frame.principalId || '',
+          role: payload.role || payload.role_name || frame.role || ''
+        };
+        const actorId = payload.actor_id || payload.actorId || payload.inviter_id || payload.added_by || frame.actor_id || frame.actorId;
+        if (actorId) addedData.actorId = actorId;
+        const method = payload.join_method || payload.method || payload.joinMethod || frame.join_method || frame.method;
+        if (method) addedData.method = method;
+        const action = payload.action || frame.action;
+        if (action) addedData.action = action;
+        const createdAt = payload.created_at || payload.createdAt || payload.timestamp || frame.created_at || frame.createdAt || frame.timestamp;
+        if (createdAt) addedData.createdAt = createdAt;
+        const eventId = payload.event_id || payload.eventId || payload.id || frame.event_id || frame.eventId || frame.id;
+        if (eventId) addedData.eventId = eventId;
+        this.emit('member.added', addedData);
         break;
+      }
 
-      case 'member.removed':
-        this.emit('member.removed', {
-          roomId: room_id || '',
-          principalId: payload.principal_id || ''
-        });
+      case 'member.updated': {
+        const updatedData = {
+          roomId: room_id || frame.roomId || payload.room_id || payload.roomId || '',
+          principalId: payload.principal_id || payload.principalId || payload.user_id || payload.userId || frame.principal_id || frame.principalId || '',
+          role: payload.role || payload.role_name || frame.role || ''
+        };
+        const actorId = payload.actor_id || payload.actorId || frame.actor_id || frame.actorId;
+        if (actorId) updatedData.actorId = actorId;
+        const createdAt = payload.created_at || payload.createdAt || payload.timestamp || frame.created_at || frame.createdAt || frame.timestamp;
+        if (createdAt) updatedData.createdAt = createdAt;
+        const eventId = payload.event_id || payload.eventId || payload.id || frame.event_id || frame.eventId || frame.id;
+        if (eventId) updatedData.eventId = eventId;
+        this.emit('member.updated', updatedData);
         break;
+      }
+
+      case 'member.removed': {
+        const removedData = {
+          roomId: room_id || frame.roomId || payload.room_id || payload.roomId || '',
+          principalId: payload.principal_id || payload.principalId || payload.user_id || payload.userId || frame.principal_id || frame.principalId || ''
+        };
+        const actorId = payload.actor_id || payload.actorId || payload.removed_by || frame.actor_id || frame.actorId;
+        if (actorId) removedData.actorId = actorId;
+        const action = payload.action || payload.reason || frame.action;
+        if (action) removedData.action = action;
+        const createdAt = payload.created_at || payload.createdAt || payload.timestamp || frame.created_at || frame.createdAt || frame.timestamp;
+        if (createdAt) removedData.createdAt = createdAt;
+        const eventId = payload.event_id || payload.eventId || payload.id || frame.event_id || frame.eventId || frame.id;
+        if (eventId) removedData.eventId = eventId;
+        this.emit('member.removed', removedData);
+        break;
+      }
 
       case 'call.started': {
         const p = payload || {};
@@ -1077,7 +1131,7 @@ export class ChatWebSocket extends SimpleEventEmitter {
       case 'ping':
         try {
           this.send('ack', { type: 'pong' }, room_id);
-        } catch {}
+        } catch { }
         this.emit('ping', { requestId: request_id });
         break;
 
@@ -1374,65 +1428,76 @@ export class ChatWebSocket extends SimpleEventEmitter {
    * @returns {string} The request_id
    */
   send(type, payload = {}, roomId = null, customRequestId = null) {
-    const effectiveRoomId = roomId || this.roomId;
     const requestId = (customRequestId && typeof customRequestId === 'string') ? customRequestId : crypto.randomUUID();
     const clientMsgId = payload?.client_message_id || payload?.clientMessageId;
-    if (clientMsgId && this._requestIdToClientMessageId) {
-      this._requestIdToClientMessageId.set(requestId, clientMsgId);
-    }
     if (this.multiRoom) {
-      let entry = null;
-      if (effectiveRoomId && this._roomSockets.has(effectiveRoomId)) {
-        entry = this._roomSockets.get(effectiveRoomId);
-      }
+      const cleanRoomId = typeof roomId === 'string' ? roomId.trim() : '';
+      const entry = cleanRoomId ? this._roomSockets.get(cleanRoomId) : null;
+      const action = payload?.body?.call_signal || type;
+      const modality = payload?.body?.call_type || null;
+      const logResult = (result, connectionState = entry?.state || CONNECTION_STATE.DISCONNECTED) => {
+        console.info('[ChatWebSocket] ROOM_SEND', {
+          stage: 'room_socket_send',
+          action,
+          modality,
+          connectionState,
+          exactRoomMatch: Boolean(entry),
+          result
+        });
+      };
+      const fail = (code, message) => {
+        logResult(code);
+        const error = new Error(message);
+        error.code = code;
+        throw error;
+      };
 
-      let targetSocket = null;
-      if (entry && entry.socket && this._isSocketOpen(entry.socket) && entry.state === CONNECTION_STATE.CONNECTED) {
-        targetSocket = entry.socket;
-      } else if (!entry) {
-        for (const candidate of this._roomSockets.values()) {
-          if (candidate.socket && this._isSocketOpen(candidate.socket) && candidate.state === CONNECTION_STATE.CONNECTED) {
-            targetSocket = candidate.socket;
-            break;
-          }
-        }
-        if (!targetSocket && this._socket && this._isSocketOpen(this._socket) && this.state === CONNECTION_STATE.CONNECTED) {
-          targetSocket = this._socket;
-        }
+      if (!cleanRoomId) {
+        fail('room_required', 'A room is required for multi-room WebSocket sends');
+      }
+      if (!entry) {
+        fail('room_socket_absent', 'No WebSocket entry exists for the requested room');
+      }
+      if (entry.state === CONNECTION_STATE.ERROR) {
+        fail('room_socket_error', 'The requested room WebSocket is in an error state');
       }
 
       const frame = encodeFrame({
         v: 1,
         request_id: requestId,
         type,
-        room_id: effectiveRoomId || undefined,
+        room_id: cleanRoomId,
         payload
       });
-      console.log('[CHECKPOINT 11] Frame encoded:', { type, roomId: effectiveRoomId, requestId, hasTargetSocket: Boolean(targetSocket) });
+      if (clientMsgId && this._requestIdToClientMessageId) {
+        this._requestIdToClientMessageId.set(requestId, clientMsgId);
+      }
 
-      if (targetSocket) {
+      if (entry.socket && this._isSocketOpen(entry.socket) && entry.state === CONNECTION_STATE.CONNECTED) {
         try {
-          targetSocket.send(frame);
-          console.log('[CHECKPOINT 12] Frame transmitted via targetSocket for room:', effectiveRoomId, 'requestId:', requestId);
+          entry.socket.send(frame);
+          logResult('sent');
           return requestId;
-        } catch (err) {
-          if (entry && (entry.state === CONNECTION_STATE.CONNECTING || entry.state === CONNECTION_STATE.RECONNECTING)) {
-            if (!Array.isArray(entry.pendingQueue)) entry.pendingQueue = [];
-            entry.pendingQueue.push({ requestId, rawFrame: frame, type, payload, roomId: effectiveRoomId });
-            return requestId;
-          }
-          throw err;
+        } catch (_) {
+          fail('socket_send_failed', 'The requested room WebSocket could not send the frame');
         }
       }
 
-      // If no open target socket, check if room is currently connecting or reconnecting
-      if (entry && (entry.state === CONNECTION_STATE.CONNECTING || entry.state === CONNECTION_STATE.RECONNECTING || (entry.socket && typeof entry.socket.readyState === 'number' && entry.socket.readyState === 0))) {
+      const isOpening = entry.state === CONNECTION_STATE.CONNECTING ||
+        entry.state === CONNECTION_STATE.RECONNECTING ||
+        (entry.socket && typeof entry.socket.readyState === 'number' && entry.socket.readyState === 0);
+      if (isOpening) {
         if (!Array.isArray(entry.pendingQueue)) entry.pendingQueue = [];
-        entry.pendingQueue.push({ requestId, rawFrame: frame, type, payload, roomId: effectiveRoomId });
+        entry.pendingQueue.push({ requestId, rawFrame: frame, type, payload, roomId: cleanRoomId });
+        logResult('queued');
         return requestId;
       }
 
-      throw new Error('Cannot send frame: WebSocket is not connected');
+      fail('room_socket_not_connected', 'The requested room WebSocket is not connected');
+    }
+
+    if (clientMsgId && this._requestIdToClientMessageId) {
+      this._requestIdToClientMessageId.set(requestId, clientMsgId);
     }
 
     // Single-room mode
@@ -1573,7 +1638,7 @@ export class ChatWebSocket extends SimpleEventEmitter {
         this.reconnectAttempts = 0;
       }
       if (this.state !== CONNECTION_STATE.CONNECTED) {
-        this.connect({ forceTokenRefresh }).catch(() => {});
+        this.connect({ forceTokenRefresh }).catch(() => { });
       }
     }
   }

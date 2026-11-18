@@ -493,7 +493,7 @@ describe('Phase 6B: Real Voice Calling WebRTC Contract Tests (A through Z)', () 
     assert.equal(manager.peerName, 'Mia');
   });
 
-  test('O. Accept transitions to connecting and creates answer upon receiving offer', async () => {
+  test('O. Receiver publishes locally, queues a colliding SFU offer, then answers it after the publication answer', async () => {
     MockRTCPeerConnection.instances = [];
     const rtcBridge = new MockRtcBridge();
     const mediaDevices = new MockMediaDevices();
@@ -515,17 +515,29 @@ describe('Phase 6B: Real Voice Calling WebRTC Contract Tests (A through Z)', () 
 
     const pc = MockRTCPeerConnection.instances[0];
     assert.ok(pc);
+    assert.equal(pc.localDescription.type, 'offer');
+    assert.equal(rtcBridge.sentOffers.length, 1, 'receiver sends its own publication offer');
 
-    // Caller's offer arrives at callee
     await rtcBridge.simulateEvent({
       type: 'offer',
-      sdp: 'v=0\r\no=caller-offer-sdp\r\n',
+      sdp: 'v=0\r\no=sfu-offer-sdp\r\n',
       requestId: 77,
+      roomId: 'room-114'
+    });
+
+    assert.equal(pc.remoteDescription, null, 'SFU offer waits behind the receiver publication offer');
+    assert.equal(manager._queuedSfuOffers.length, 1);
+    assert.equal(rtcBridge.sentAnswers.length, 0);
+
+    await rtcBridge.simulateEvent({
+      type: 'answer',
+      sdp: 'v=0\r\no=receiver-publication-answer\r\n',
       roomId: 'room-114'
     });
 
     assert.equal(pc.remoteDescription.type, 'offer');
     assert.equal(pc.localDescription.type, 'answer');
+    assert.equal(manager._queuedSfuOffers.length, 0);
     assert.equal(rtcBridge.sentAnswers.length, 1);
     assert.equal(rtcBridge.sentAnswers[0].requestId, 77);
 
@@ -773,6 +785,342 @@ describe('Phase 6B: Real Voice Calling WebRTC Contract Tests (A through Z)', () 
     assert.ok(!JSON.stringify(manager).includes('rt_'));
 
     await manager.endCall();
+  });
+
+  test('AA. Synthetic incoming identity adopts the authoritative server call ID', async () => {
+    const rtcBridge = new MockRtcBridge();
+    const manager = new VoiceCallManager({ rtcBridge });
+
+    manager.handleIncomingCall({ roomId: 'room-aa', initiator: 'Alice' });
+    const epoch = manager.callEpoch;
+
+    assert.equal(manager.callId, 'room-aa');
+    assert.equal(manager._callIdIsSynthetic, true);
+    assert.equal(manager.adoptAuthoritativeCallId('call-authoritative-aa', {
+      roomId: 'room-aa',
+      callEpoch: epoch
+    }), true);
+    assert.equal(manager.callId, 'call-authoritative-aa');
+    assert.equal(manager._callIdIsSynthetic, false);
+
+    await manager.endCall(false);
+  });
+
+  test('AB. A conflicting authoritative call ID cannot replace the active identity', async () => {
+    const rtcBridge = new MockRtcBridge();
+    const manager = new VoiceCallManager({ rtcBridge });
+
+    manager.handleIncomingCall({
+      roomId: 'room-ab',
+      callId: 'call-authoritative-ab',
+      initiator: 'Bob'
+    });
+
+    assert.equal(manager.adoptAuthoritativeCallId('call-conflict-ab', {
+      roomId: 'room-ab',
+      callEpoch: manager.callEpoch
+    }), false);
+    assert.equal(manager.callId, 'call-authoritative-ab');
+
+    await manager.endCall(false);
+  });
+
+  test('AC. Stale call ID and stale epoch terminations cannot end the current call', async () => {
+    const rtcBridge = new MockRtcBridge();
+    const mediaDevices = new MockMediaDevices();
+    const manager = new VoiceCallManager({
+      rtcBridge,
+      mediaDevices,
+      PeerConnectionClass: MockRTCPeerConnection
+    });
+
+    await manager.startCall('room-ac', 'Carol');
+    const currentEpoch = manager.callEpoch;
+    manager.adoptAuthoritativeCallId('call-current-ac', {
+      roomId: 'room-ac',
+      callEpoch: currentEpoch
+    });
+
+    await manager.handleRemoteCallEnded({
+      roomId: 'room-ac',
+      callId: 'call-old-ac',
+      callEpoch: currentEpoch
+    });
+    assert.equal(manager.state, CALL_STATE.CALLING);
+
+    await manager.handleRemoteCallEnded({
+      roomId: 'room-ac',
+      callId: 'call-current-ac',
+      callEpoch: currentEpoch - 1
+    });
+    assert.equal(manager.state, CALL_STATE.CALLING);
+
+    await manager.endCall(false);
+  });
+
+  test('AD. Incoming ringing preconnect is reused by acceptance', async () => {
+    MockRTCPeerConnection.instances = [];
+    const rtcBridge = new MockRtcBridge();
+    const mediaDevices = new MockMediaDevices();
+    const manager = new VoiceCallManager({
+      rtcBridge,
+      mediaDevices,
+      PeerConnectionClass: MockRTCPeerConnection
+    });
+
+    manager.handleIncomingCall({
+      roomId: 'room-ad',
+      callId: 'call-ad',
+      initiator: 'David'
+    });
+    await Promise.resolve();
+    assert.equal(rtcBridge.connectCalls.length, 1);
+
+    await manager.acceptCall();
+    assert.equal(rtcBridge.connectCalls.length, 1);
+    assert.equal(manager.state, CALL_STATE.CONNECTING);
+
+    await manager.endCall(false);
+  });
+
+  test('AE. Delayed cleanup from call one cannot clear a newly started call two', async () => {
+    MockRTCPeerConnection.instances = [];
+    const rtcBridge = new MockRtcBridge();
+    const mediaDevices = new MockMediaDevices();
+    const manager = new VoiceCallManager({
+      rtcBridge,
+      mediaDevices,
+      PeerConnectionClass: MockRTCPeerConnection
+    });
+
+    await manager.startCall('room-ae-one', 'First');
+    const firstEpoch = manager.callEpoch;
+    await manager.endCall(false);
+
+    await manager.startCall('room-ae-two', 'Second');
+    const secondEpoch = manager.callEpoch;
+    assert.ok(secondEpoch > firstEpoch);
+
+    await new Promise(resolve => setTimeout(resolve, 850));
+    assert.equal(manager.state, CALL_STATE.CALLING);
+    assert.equal(manager.roomId, 'room-ae-two');
+    assert.equal(manager.callEpoch, secondEpoch);
+
+    await manager.endCall(false);
+  });
+
+  test('AF. Deferred camera completion from call one cannot attach to call two', async () => {
+    MockRTCPeerConnection.instances = [];
+    const rtcBridge = new MockRtcBridge();
+    let resolveCamera;
+    let mediaRequestCount = 0;
+    const staleCameraTrack = new MockAudioTrack('video');
+    const mediaDevices = {
+      async getUserMedia(constraints) {
+        mediaRequestCount += 1;
+        if (mediaRequestCount === 2 && constraints.video === true) {
+          return new Promise(resolve => {
+            resolveCamera = resolve;
+          });
+        }
+        return new MockMediaStream();
+      }
+    };
+    const manager = new VoiceCallManager({
+      rtcBridge,
+      mediaDevices,
+      PeerConnectionClass: MockRTCPeerConnection
+    });
+
+    await manager.startCall('room-af-one', 'First');
+    const cameraPromise = manager.enableCamera();
+    await Promise.resolve();
+    assert.equal(typeof resolveCamera, 'function');
+
+    await manager.endCall(false);
+    await manager.startCall('room-af-two', 'Second');
+    const secondEpoch = manager.callEpoch;
+
+    resolveCamera(new MockMediaStream([staleCameraTrack]));
+    assert.equal(await cameraPromise, false);
+    assert.equal(staleCameraTrack.stopped, true);
+    assert.equal(manager.roomId, 'room-af-two');
+    assert.equal(manager.callEpoch, secondEpoch);
+    assert.equal(manager._localVideoTrack, null);
+
+    await manager.endCall(false);
+  });
+
+  test('AG. Delayed same-room legacy event without identity cannot end call two', async () => {
+    MockRTCPeerConnection.instances = [];
+    const manager = new VoiceCallManager({
+      rtcBridge: new MockRtcBridge(),
+      mediaDevices: new MockMediaDevices(),
+      PeerConnectionClass: MockRTCPeerConnection
+    });
+
+    await manager.startCall('room-ag', 'First');
+    manager.adoptAuthoritativeCallId('call-ag-one', {
+      roomId: 'room-ag',
+      callEpoch: manager.callEpoch
+    });
+    await manager.endCall(false);
+
+    await manager.startCall('room-ag', 'Second');
+    manager.adoptAuthoritativeCallId('call-ag-two', {
+      roomId: 'room-ag',
+      callEpoch: manager.callEpoch
+    });
+    const secondEpoch = manager.callEpoch;
+
+    await manager.handleRemoteCallEnded({ roomId: 'room-ag' });
+
+    assert.equal(manager.state, CALL_STATE.CALLING);
+    assert.equal(manager.callId, 'call-ag-two');
+    assert.equal(manager.callEpoch, secondEpoch);
+    await manager.endCall(false);
+  });
+
+  test('AH. Wrong call ID cannot end call two in the same room', async () => {
+    MockRTCPeerConnection.instances = [];
+    const manager = new VoiceCallManager({
+      rtcBridge: new MockRtcBridge(),
+      mediaDevices: new MockMediaDevices(),
+      PeerConnectionClass: MockRTCPeerConnection
+    });
+
+    await manager.startCall('room-ah', 'First');
+    manager.adoptAuthoritativeCallId('call-ah-one', {
+      roomId: 'room-ah',
+      callEpoch: manager.callEpoch
+    });
+    await manager.endCall(false);
+
+    await manager.startCall('room-ah', 'Second');
+    manager.adoptAuthoritativeCallId('call-ah-two', {
+      roomId: 'room-ah',
+      callEpoch: manager.callEpoch
+    });
+
+    await manager.handleRemoteCallEnded({
+      roomId: 'room-ah',
+      callId: 'call-ah-one'
+    });
+
+    assert.equal(manager.state, CALL_STATE.CALLING);
+    assert.equal(manager.callId, 'call-ah-two');
+    await manager.endCall(false);
+  });
+
+  test('AI. Current-call legacy hangup with a current source timestamp remains compatible', async () => {
+    MockRTCPeerConnection.instances = [];
+    const manager = new VoiceCallManager({
+      rtcBridge: new MockRtcBridge(),
+      mediaDevices: new MockMediaDevices(),
+      PeerConnectionClass: MockRTCPeerConnection
+    });
+
+    await manager.startCall('room-ai', 'First');
+    await manager.endCall(false);
+    await manager.startCall('room-ai', 'Second');
+
+    await manager.handleRemoteCallEnded({
+      roomId: 'room-ai',
+      eventTimestamp: manager._callStartEpoch
+    });
+
+    assert.equal(manager.state, CALL_STATE.REMOTE_DECLINED);
+  });
+
+  test('AJ. Outgoing invitation success is awaited before _inviteSent becomes true', async () => {
+    MockRTCPeerConnection.instances = [];
+    const signals = [];
+    let resolveInvite;
+    const inviteGate = new Promise(resolve => {
+      resolveInvite = resolve;
+    });
+    const manager = new VoiceCallManager({
+      rtcBridge: new MockRtcBridge(),
+      mediaDevices: new MockMediaDevices(),
+      PeerConnectionClass: MockRTCPeerConnection,
+      sendSignal: async signal => {
+        signals.push(signal);
+        await inviteGate;
+        return { ok: true, requestId: 'safe-request' };
+      }
+    });
+
+    const startup = manager.startCall('room-aj', 'Awaited invite');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(signals[0]?.action, 'invite');
+    assert.equal(manager._inviteSent, false);
+
+    resolveInvite();
+    await startup;
+    assert.equal(manager._inviteSent, true);
+    assert.equal(manager.state, CALL_STATE.OUTGOING_RINGING);
+    await manager.endCall(false);
+  });
+
+  test('AK. Resolved invitation failure rejects startup, stays unsent, sends no cancel or leave, and cleans resources', async () => {
+    MockRTCPeerConnection.instances = [];
+    const rtcBridge = new MockRtcBridge();
+    const mediaDevices = new MockMediaDevices();
+    const signals = [];
+    const manager = new VoiceCallManager({
+      rtcBridge,
+      mediaDevices,
+      PeerConnectionClass: MockRTCPeerConnection,
+      sendSignal: async signal => {
+        signals.push(signal);
+        return { ok: false, code: 'room_socket_absent' };
+      }
+    });
+
+    await assert.rejects(
+      manager.startCall('room-ak', 'Resolved failure'),
+      err => err?.code === 'room_socket_absent'
+    );
+
+    assert.equal(manager.state, CALL_STATE.FAILED);
+    assert.equal(manager._inviteSent, false);
+    assert.deepEqual(signals.map(signal => signal.action), ['invite']);
+    assert.equal(rtcBridge.leavesSent, 0);
+    assert.equal(rtcBridge.disconnectCalls, 1);
+    assert.equal(manager.peerConnection, null);
+    assert.equal(manager._localStream, null);
+    assert.equal(mediaDevices.getUserMediaCalls.length, 1);
+    assert.equal(MockRTCPeerConnection.instances[0].isClosed, true);
+  });
+
+  test('AL. Rejected invitation dispatch rethrows the original failure and performs FAILED-to-IDLE cleanup without false cancel', async () => {
+    MockRTCPeerConnection.instances = [];
+    const rtcBridge = new MockRtcBridge();
+    const signals = [];
+    const dispatchError = new Error('renderer dispatch rejected');
+    dispatchError.code = 'call_signal_ipc_rejected';
+    const manager = new VoiceCallManager({
+      rtcBridge,
+      mediaDevices: new MockMediaDevices(),
+      PeerConnectionClass: MockRTCPeerConnection,
+      sendSignal: async signal => {
+        signals.push(signal);
+        throw dispatchError;
+      }
+    });
+
+    await assert.rejects(
+      manager.startCall('room-al', 'Rejected failure'),
+      err => err === dispatchError
+    );
+    assert.equal(manager.state, CALL_STATE.FAILED);
+    assert.equal(manager._inviteSent, false);
+    assert.deepEqual(signals.map(signal => signal.action), ['invite']);
+    assert.equal(rtcBridge.leavesSent, 0);
+    assert.equal(manager.peerConnection, null);
+
+    await new Promise(resolve => setTimeout(resolve, 850));
+    assert.equal(manager.state, CALL_STATE.IDLE);
   });
 
 });
