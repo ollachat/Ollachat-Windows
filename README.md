@@ -474,9 +474,32 @@ Optional: Specify an exact Unix millisecond timestamp captured immediately prior
 npm run get-otp -- +15550001111 --since 1758440000000
 ```
 
+**macOS / Linux (zsh/bash):**
+```bash
+export SIM_TOKEN="YOUR_TOKEN"   # add to ~/.zshrc to persist; never commit it
+npm run get-otp -- +15550001111
+```
+
 ### 3. Security Guidelines
 - **QA-Only Credential:** `SIM_TOKEN` is for QA out-of-band verification only.
 - **No Client Inclusion:** `SIM_TOKEN` must never be placed in the Electron application (main, preload, renderer).
 - **No Commits:** `SIM_TOKEN` must never be hardcoded, saved to repo files, or committed to source control.
 - **Direct Backend Architecture:** The Windows application continues to communicate directly with `api.ollacore.com`. The helper only reads the intercepted OTP from the simulator out-of-band.
 
+
+## macOS
+
+Build and run on a Mac:
+
+```bash
+npm install
+npm run dev               # run from source
+npm run dist:mac:local    # unpacked .app in release/mac-arm64/ (quick local test)
+npm run dist:mac          # .dmg + .zip for Apple Silicon (arm64) and Intel (x64) in release/
+```
+
+Notes:
+- Builds are **unsigned** until a Developer ID certificate is configured (see the `mac:` section of `electron-builder.yml`). On another Mac, right-click the app → Open the first time.
+- `npm run dist:mac` builds x64 last, which leaves `node_modules/sqlite3` compiled for Intel. On Apple Silicon run `npx electron-builder install-app-deps --arch arm64` before `npm run dev`.
+- Launching from a VS Code-based editor's terminal: unset `ELECTRON_RUN_AS_NODE` first (`env -u ELECTRON_RUN_AS_NODE npm run dev`), or the app exits immediately.
+- Permissions: macOS asks for Microphone/Camera on first use. Screen sharing needs OllaChat enabled in System Settings → Privacy & Security → Screen Recording (then restart the app).

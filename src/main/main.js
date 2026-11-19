@@ -3019,6 +3019,38 @@ async function syncAndConnectUserRooms() {
 }
 
 app.whenReady().then(async () => {
+  if (process.platform === 'darwin') {
+    // Standard macOS menu bar: enables Cmd+C/V/X/A/Z, Cmd+H, Cmd+M, Cmd+W and Cmd+Q.
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' }
+        ]
+      },
+      { role: 'editMenu' },
+      {
+        label: 'View',
+        submenu: [
+          { role: 'resetZoom' },
+          { role: 'zoomIn' },
+          { role: 'zoomOut' },
+          { type: 'separator' },
+          { role: 'togglefullscreen' }
+        ]
+      },
+      { role: 'windowMenu' }
+    ]));
+  }
+
   const userDataPath = app.getPath('userData');
   getOrCreatePersistentDeviceId(userDataPath);
   sessionStore = new SessionStore(userDataPath);
