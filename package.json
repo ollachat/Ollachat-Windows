@@ -1,7 +1,7 @@
 {
   "name": "ollachat-windows",
   "version": "1.0.0",
-  "description": "OllaChat Windows Desktop Application",
+  "description": "OllaChat Desktop Application (Windows & macOS)",
   "main": "dist/main/main.js",
   "type": "module",
   "author": "Ollacore",
@@ -16,7 +16,10 @@
     "package": "npm run build && electron-builder --dir --x64",
     "installer": "npm run build && electron-builder --win nsis --x64",
     "portable": "npm run build && electron-builder --win portable --x64",
-    "dist": "npm run build && electron-builder --win --x64"
+    "dist": "npm run build && electron-builder --win --x64",
+    "dist:win": "npm run build && electron-builder --win --x64",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:mac:local": "npm run build && electron-builder --mac --dir"
   },
   "dependencies": {
     "sqlite3": "^6.0.1",

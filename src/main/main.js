@@ -12,7 +12,8 @@ import {
   powerMonitor,
   clipboard,
   desktopCapturer,
-  screen
+  screen,
+  systemPreferences
 } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -93,6 +94,49 @@ if (startupIntent) {
   pendingIntentManager.setIntent(startupIntent);
 }
 
+// macOS delivers ollachat:// links via 'open-url' (not argv). Register before 'ready'
+// so cold-start links that launch the app are not dropped.
+if (process.platform === 'darwin') {
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    const intent = parseLaunchArgs([url]);
+    if (!intent) return;
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+      if (!mainWindow.isVisible()) mainWindow.show();
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      mainWindow.webContents.send('app:intent', intent);
+    } else {
+      pendingIntentManager.setIntent(intent);
+    }
+  });
+}
+
+/**
+ * On macOS, camera/microphone access requires an OS-level (TCC) prompt in addition to
+ * Chromium's permission. Resolves true when the OS grants access (always true elsewhere).
+ */
+async function ensureMacMediaAccess(mediaTypes = []) {
+  if (process.platform !== 'darwin') return true;
+  const wanted = new Set();
+  for (const t of mediaTypes) {
+    if (t === 'audio') wanted.add('microphone');
+    if (t === 'video') wanted.add('camera');
+  }
+  for (const kind of wanted) {
+    try {
+      const status = systemPreferences.getMediaAccessStatus(kind);
+      if (status === 'granted') continue;
+      if (status === 'denied' || status === 'restricted') return false;
+      if (!(await systemPreferences.askForMediaAccess(kind))) return false;
+    } catch (err) {
+      console.warn(`[main] macOS ${kind} access check failed:`, err?.message || err);
+      return false;
+    }
+  }
+  return true;
+}
+
 // Single Instance Lock: prevents duplicate application instances
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -142,7 +186,7 @@ function createWindow() {
     height: 720,
     minWidth: 850,
     minHeight: 600,
-    title: 'OllaChat Windows',
+    title: process.platform === 'darwin' ? 'OllaChat' : 'OllaChat Windows',
     backgroundColor: '#0f172a',
     show: false,
     webPreferences: {
@@ -194,7 +238,11 @@ function createWindow() {
       const mediaTypes = details?.mediaTypes || [];
       // Allow audio (voice calls), video (video calls), and screen/desktop (screen sharing)
       const isAllowed = mediaTypes.length === 0 || mediaTypes.every((t) => t === 'audio' || t === 'video' || t === 'screen' || t === 'desktop');
-      callback(isAllowed);
+      if (!isAllowed) {
+        callback(false);
+        return;
+      }
+      ensureMacMediaAccess(mediaTypes).then(callback, () => callback(false));
       return;
     }
     if (permission === 'microphone' || permission === 'camera' || permission === 'audioCapture' || permission === 'videoCapture') {
@@ -454,10 +502,33 @@ function getOrCreateFloatingCallWindow() {
   return floatingCallWindow;
 }
 
+/**
+ * Builds a monochrome template image for the macOS menu bar (auto-adapts to light/dark).
+ * Drawn at 2x (32px) as a chat-bubble-like filled circle.
+ */
+function createMacTrayIcon() {
+  const size = 32;
+  const buf = Buffer.alloc(size * size * 4);
+  const c = (size - 1) / 2;
+  const r = 12;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x - c, y - c);
+      // Tail at bottom-left to suggest a speech bubble
+      const inTail = x >= 5 && x <= 12 && y >= 22 && y <= 29 && (x - 5) >= (y - 22);
+      const alpha = d <= r ? Math.min(1, r - d + 0.5) : (inTail ? 1 : 0);
+      buf[(y * size + x) * 4 + 3] = Math.round(alpha * 255); // BGRA, black w/ alpha
+    }
+  }
+  const img = nativeImage.createFromBitmap(buf, { width: size, height: size, scaleFactor: 2 });
+  img.setTemplateImage(true);
+  return img;
+}
+
 function createTray() {
   if (tray) return;
 
-  const trayIcon = nativeImage.createFromDataURL(
+  const trayIcon = process.platform === 'darwin' ? createMacTrayIcon() : nativeImage.createFromDataURL(
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAcUlEQVR4nO3O2w3AIAxDUZbpaizMQO0CvEzsBFWx5O97SsmBe1p9Zw8LyyBomAqxxk0IVvwIwY5DCFV8GxEKUMeXiFCAV3yISEACEhAO8ER041cAPBDT+BUAJWIrrkJAcTbiKM5CmOIWCC2MQmTh3+4DbKOwFPBjuV4AAAAASUVORK5CYII='
   );
 
