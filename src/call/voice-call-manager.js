@@ -449,6 +449,21 @@ export class VoiceCallManager extends CallEventEmitter {
     };
   }
 
+  /**
+   * Adopts the caller-issued signaling epoch for an incoming call whose epoch was unknown
+   * (presented from server call.started before the caller's invite message arrived).
+   * @returns {boolean} true if adopted
+   */
+  adoptSignalingEpoch(value, { roomId = null } = {}) {
+    if (this.signalingEpoch !== null) return false;
+    if (this.state !== CALL_STATE.INCOMING_RINGING) return false;
+    if (roomId && this.roomId && String(roomId).trim() !== String(this.roomId).trim()) return false;
+    const normalized = this._normalizeSignalingEpoch(value);
+    if (normalized === null) return false;
+    this.signalingEpoch = normalized;
+    return true;
+  }
+
   adoptAuthoritativeCallId(callId, {
     roomId = null,
     callEpoch = null,
@@ -1844,7 +1859,9 @@ export class VoiceCallManager extends CallEventEmitter {
     const epoch = this._beginCallInstance({
       callId: hasAuthoritativeCallId ? String(callId).trim() : this.roomId,
       syntheticCallId: !hasAuthoritativeCallId,
-      signalingEpoch: callEpoch
+      // Unknown epoch (e.g. server call.started has none) must stay null; defaulting to the
+      // local counter makes our accept carry an epoch the caller never issued -> rejected as stale.
+      signalingEpoch: callEpoch ?? null
     });
     const resolvedIsVideo = Boolean(
       isVideo === true ||
