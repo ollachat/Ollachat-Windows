@@ -9449,6 +9449,7 @@ export function handleRealtimeChatEvent(frame) {
         }
 
         if (voiceCallManager.roomId === eventRoomId && voiceCallManager.state === CALL_STATE.INCOMING_RINGING) {
+          voiceCallManager.adoptSignalingEpoch?.(signalCallEpoch, { roomId: eventRoomId });
           if (signalCallId) {
             voiceCallManager.adoptAuthoritativeCallId(signalCallId, {
               roomId: eventRoomId,

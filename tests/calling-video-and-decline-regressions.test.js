@@ -702,8 +702,32 @@ describe('1-to-1 Video Calling & Decline Regressions Suite', () => {
       action: 'decline',
       roomId: 'room-signal-decline',
       callId: 'c7',
-      callEpoch: manager.callEpoch
+      // No caller epoch was provided, so none is echoed (never the callee's local counter).
+      callEpoch: undefined
     });
+  });
+
+  // N4. Regression: callee presented without an epoch (server call.started) must not answer with its
+  // own local epoch counter; it adopts the caller's epoch from the later invite message instead.
+  test('N4. callee without caller epoch adopts invite epoch and never echoes its local counter', async () => {
+    const signals = [];
+    const { manager } = createManager({
+      sendSignal: (sig) => signals.push(sig)
+    });
+
+    // Simulate a long-running callee whose local counter has advanced past the caller's epoch.
+    manager._callEpochCounter = 7;
+    manager.handleIncomingCall({ roomId: 'room-epoch', callId: 'c9', initiator: 'user-a', peerName: 'Alice' });
+    assert.equal(manager.state, CALL_STATE.INCOMING_RINGING);
+    assert.equal(manager.signalingEpoch, null);
+
+    assert.equal(manager.adoptSignalingEpoch(1, { roomId: 'other-room' }), false);
+    assert.equal(manager.adoptSignalingEpoch(1, { roomId: 'room-epoch' }), true);
+    assert.equal(manager.signalingEpoch, 1);
+    assert.equal(manager.adoptSignalingEpoch(2, { roomId: 'room-epoch' }), false, 'known epoch is not overwritten');
+
+    manager.declineCall();
+    assert.equal(signals.at(-1).callEpoch, 1);
   });
 
   // O. Caller receiving decline transitions immediately to REMOTE_DECLINED without entering CONNECTED
