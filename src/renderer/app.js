@@ -6215,8 +6215,8 @@ function createMessageBubbleElement(message) {
       } else {
         const placeholder = document.createElement('div');
         placeholder.className = 'media-placeholder';
-        if (resolved.attachmentId) {
-          placeholder.setAttribute('data-attachment-id', resolved.attachmentId);
+        if (resolved.attachmentId || cid) {
+          placeholder.setAttribute('data-attachment-id', resolved.attachmentId || cid);
         }
         const spinner = document.createElement('span');
         spinner.className = 'spinner spinner-sm';
@@ -8038,6 +8038,13 @@ async function processAndUploadVoiceNote({ blob, duration, mimeType }) {
     clientMessageId
   });
 
+  // 2. Local instant blob preview URL for immediate playback in the optimistic bubble.
+  // Registered before the first render so the bubble shows a player, not a stuck placeholder.
+  try {
+    const localUrl = URL.createObjectURL(blob);
+    attachmentUrls.set(clientMessageId, localUrl);
+  } catch { }
+
   roomMessagesState.addOptimisticMessage(optimisticMsg);
   persistMessageToDb(optimisticMsg, targetRoomId).catch(() => { });
   messagesEmpty?.classList.add('hidden');
@@ -8045,13 +8052,6 @@ async function processAndUploadVoiceNote({ blob, duration, mimeType }) {
   renderMessages();
   scrollToBottom(true);
   dismissUnreadDivider(targetRoomId);
-
-  // 2. Local instant blob preview URL for immediate playback in the optimistic bubble
-  try {
-    const localUrl = URL.createObjectURL(blob);
-    attachmentUrls.set(clientMessageId, localUrl);
-    updateMediaPlaceholdersInDom(clientMessageId, localUrl);
-  } catch { }
 
   // 3. Update sidebar conversation preview
   const conv = shellState.conversations.find((c) => c.roomId === targetRoomId);
