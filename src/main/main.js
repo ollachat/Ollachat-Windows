@@ -137,6 +137,23 @@ async function ensureMacMediaAccess(mediaTypes = []) {
   return true;
 }
 
+// macOS: store app data under "~/Library/Application Support/OllaChat" instead of the
+// package name ("ollachat-windows"). Must run before the single-instance lock and any
+// getPath('userData') use. Existing data from the old folder is moved over once.
+if (process.platform === 'darwin') {
+  try {
+    const appSupport = app.getPath('appData');
+    const macUserData = path.join(appSupport, 'OllaChat');
+    const legacyUserData = path.join(appSupport, 'ollachat-windows');
+    if (!fs.existsSync(macUserData) && fs.existsSync(legacyUserData)) {
+      fs.renameSync(legacyUserData, macUserData);
+    }
+    app.setPath('userData', macUserData);
+  } catch (err) {
+    console.warn('[main] Failed to set macOS userData path:', err?.message || err);
+  }
+}
+
 // Single Instance Lock: prevents duplicate application instances
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
