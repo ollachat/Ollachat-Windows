@@ -32,6 +32,28 @@ win:
   signAndEditExecutable: false
   forceCodeSigning: false
 
+mac:
+  category: public.app-category.social-networking
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Signing/notarization: set CSC_LINK/CSC_KEY_PASSWORD (Developer ID cert) and
+  # APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID, then flip notarize to true.
+  notarize: false
+  extendInfo:
+    NSMicrophoneUsageDescription: OllaChat needs microphone access for voice and video calls.
+    NSCameraUsageDescription: OllaChat needs camera access for video calls.
+    NSAudioCaptureUsageDescription: OllaChat needs audio capture access to share system audio during calls.
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
 nsis:
   oneClick: true
   perMachine: false

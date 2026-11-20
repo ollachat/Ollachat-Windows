@@ -474,9 +474,46 @@ Optional: Specify an exact Unix millisecond timestamp captured immediately prior
 npm run get-otp -- +15550001111 --since 1758440000000
 ```
 
+**macOS / Linux (zsh/bash):**
+```bash
+export SIM_TOKEN="YOUR_TOKEN"   # add to ~/.zshrc to persist; never commit it
+npm run get-otp -- +15550001111
+```
+
 ### 3. Security Guidelines
 - **QA-Only Credential:** `SIM_TOKEN` is for QA out-of-band verification only.
 - **No Client Inclusion:** `SIM_TOKEN` must never be placed in the Electron application (main, preload, renderer).
 - **No Commits:** `SIM_TOKEN` must never be hardcoded, saved to repo files, or committed to source control.
 - **Direct Backend Architecture:** The Windows application continues to communicate directly with `api.ollacore.com`. The helper only reads the intercepted OTP from the simulator out-of-band.
 
+
+## macOS
+
+Build and run on a Mac:
+
+```bash
+npm install
+npm run dev               # run from source
+npm run dist:mac:local    # unpacked .app in release/mac-arm64/ (quick local test)
+npm run dist:mac          # .dmg + .zip for Apple Silicon (arm64) and Intel (x64) in release/
+```
+
+Notes:
+- Builds are **unsigned** until a Developer ID certificate is configured (see the `mac:` section of `electron-builder.yml`). On another Mac, right-click the app → Open the first time.
+- `npm run dist:mac` builds x64 last, which leaves `node_modules/sqlite3` compiled for Intel. On Apple Silicon run `npx electron-builder install-app-deps --arch arm64` before `npm run dev`.
+- Launching from a VS Code-based editor's terminal: unset `ELECTRON_RUN_AS_NODE` first (`env -u ELECTRON_RUN_AS_NODE npm run dev`), or the app exits immediately.
+- Permissions: macOS asks for Microphone/Camera on first use. Screen sharing needs OllaChat enabled in System Settings → Privacy & Security → Screen Recording (then restart the app).
+
+### Automated Mac end-to-end test
+
+`npm run e2e:mac` launches two OllaChat instances on this Mac (QA1 and QA2, each with its own data folder under `~/Library/Application Support/OllaChat-E2E/`), drives the real UI with Playwright, and checks:
+
+- macOS behaviour: app name, menu bar, welcome text, close-to-hide and Dock restore
+- messaging: text both ways, image upload and delivery
+- voice calls in both directions: ringing, both sides connected (no "stuck on Ringing"), timer, audio flowing, mute, hang up
+- video call: video and audio flowing both ways
+- screen share during a video call
+
+Requires `SIM_TOKEN` (logins fetch OTP codes automatically and persist between runs) and a direct chat between QA1 and QA2. Options: `--only=mac,messaging,voice,video,screen`, `--packaged` (test `release/mac-arm64/OllaChat.app`), `--keep-open`, `--allow-group`. Results, screenshots and both apps' logs go to `~/Library/Logs/OllaChat/e2e/<run>/`.
+
+It uses Chromium's fake camera and microphone, so it does not cover real audio/video hardware or the macOS permission prompts. Note that logging QA2 in here can affect anyone else using QA2 at the same time.

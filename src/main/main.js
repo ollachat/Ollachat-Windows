@@ -12,7 +12,8 @@ import {
   powerMonitor,
   clipboard,
   desktopCapturer,
-  screen
+  screen,
+  systemPreferences
 } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -93,6 +94,79 @@ if (startupIntent) {
   pendingIntentManager.setIntent(startupIntent);
 }
 
+// macOS delivers ollachat:// links via 'open-url' (not argv). Register before 'ready'
+// so cold-start links that launch the app are not dropped.
+if (process.platform === 'darwin') {
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    const intent = parseLaunchArgs([url]);
+    if (!intent) return;
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
+      if (!mainWindow.isVisible()) mainWindow.show();
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      mainWindow.webContents.send('app:intent', intent);
+    } else {
+      pendingIntentManager.setIntent(intent);
+    }
+  });
+}
+
+/**
+ * On macOS, camera/microphone access requires an OS-level (TCC) prompt in addition to
+ * Chromium's permission. Resolves true when the OS grants access (always true elsewhere).
+ */
+async function ensureMacMediaAccess(mediaTypes = []) {
+  if (process.platform !== 'darwin') return true;
+  // Chromium fake capture devices (used by E2E tests) don't touch real hardware.
+  if (app.commandLine.hasSwitch('use-fake-device-for-media-stream')) return true;
+  const wanted = new Set();
+  for (const t of mediaTypes) {
+    if (t === 'audio') wanted.add('microphone');
+    if (t === 'video') wanted.add('camera');
+  }
+  for (const kind of wanted) {
+    try {
+      const status = systemPreferences.getMediaAccessStatus(kind);
+      if (status === 'granted') continue;
+      if (status === 'denied' || status === 'restricted') return false;
+      if (!(await systemPreferences.askForMediaAccess(kind))) return false;
+    } catch (err) {
+      console.warn(`[main] macOS ${kind} access check failed:`, err?.message || err);
+      return false;
+    }
+  }
+  return true;
+}
+
+// macOS: store app data under "~/Library/Application Support/OllaChat" instead of the
+// package name ("ollachat-windows"). Must run before the single-instance lock and any
+// getPath('userData') use. Existing data from the old folder is moved over once.
+if (process.platform === 'darwin') {
+  // app.name otherwise comes from package.json "name" ("ollachat-windows"), which shows in the
+  // app menu and About panel.
+  app.setName('OllaChat');
+  try {
+    app.setAboutPanelOptions({
+      applicationName: 'OllaChat',
+      applicationVersion: app.getVersion(),
+      copyright: 'Copyright © 2026 Ollacore'
+    });
+  } catch { }
+  try {
+    const appSupport = app.getPath('appData');
+    const macUserData = path.join(appSupport, 'OllaChat');
+    const legacyUserData = path.join(appSupport, 'ollachat-windows');
+    if (!fs.existsSync(macUserData) && fs.existsSync(legacyUserData)) {
+      fs.renameSync(legacyUserData, macUserData);
+    }
+    // E2E tests run several isolated instances side by side, each with its own data folder.
+    app.setPath('userData', process.env.OLLACHAT_USER_DATA_DIR || macUserData);
+  } catch (err) {
+    console.warn('[main] Failed to set macOS userData path:', err?.message || err);
+  }
+}
+
 // Single Instance Lock: prevents duplicate application instances
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -142,7 +216,7 @@ function createWindow() {
     height: 720,
     minWidth: 850,
     minHeight: 600,
-    title: 'OllaChat Windows',
+    title: process.platform === 'darwin' ? 'OllaChat' : 'OllaChat Windows',
     backgroundColor: '#0f172a',
     show: false,
     webPreferences: {
@@ -194,7 +268,11 @@ function createWindow() {
       const mediaTypes = details?.mediaTypes || [];
       // Allow audio (voice calls), video (video calls), and screen/desktop (screen sharing)
       const isAllowed = mediaTypes.length === 0 || mediaTypes.every((t) => t === 'audio' || t === 'video' || t === 'screen' || t === 'desktop');
-      callback(isAllowed);
+      if (!isAllowed) {
+        callback(false);
+        return;
+      }
+      ensureMacMediaAccess(mediaTypes).then(callback, () => callback(false));
       return;
     }
     if (permission === 'microphone' || permission === 'camera' || permission === 'audioCapture' || permission === 'videoCapture') {
@@ -454,10 +532,33 @@ function getOrCreateFloatingCallWindow() {
   return floatingCallWindow;
 }
 
+/**
+ * Builds a monochrome template image for the macOS menu bar (auto-adapts to light/dark).
+ * Drawn at 2x (32px) as a chat-bubble-like filled circle.
+ */
+function createMacTrayIcon() {
+  const size = 32;
+  const buf = Buffer.alloc(size * size * 4);
+  const c = (size - 1) / 2;
+  const r = 12;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x - c, y - c);
+      // Tail at bottom-left to suggest a speech bubble
+      const inTail = x >= 5 && x <= 12 && y >= 22 && y <= 29 && (x - 5) >= (y - 22);
+      const alpha = d <= r ? Math.min(1, r - d + 0.5) : (inTail ? 1 : 0);
+      buf[(y * size + x) * 4 + 3] = Math.round(alpha * 255); // BGRA, black w/ alpha
+    }
+  }
+  const img = nativeImage.createFromBitmap(buf, { width: size, height: size, scaleFactor: 2 });
+  img.setTemplateImage(true);
+  return img;
+}
+
 function createTray() {
   if (tray) return;
 
-  const trayIcon = nativeImage.createFromDataURL(
+  const trayIcon = process.platform === 'darwin' ? createMacTrayIcon() : nativeImage.createFromDataURL(
     'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAcUlEQVR4nO3O2w3AIAxDUZbpaizMQO0CvEzsBFWx5O97SsmBe1p9Zw8LyyBomAqxxk0IVvwIwY5DCFV8GxEKUMeXiFCAV3yISEACEhAO8ER041cAPBDT+BUAJWIrrkJAcTbiKM5CmOIWCC2MQmTh3+4DbKOwFPBjuV4AAAAASUVORK5CYII='
   );
 
@@ -1835,8 +1936,25 @@ ipcMain.handle('floating-call:bridge-signal', (_event, signal) => {
 });
 
 // Desktop / Screen Capture Sources Handler (Phase 1 Screen Sharing)
+const MAC_SCREEN_PERMISSION_MESSAGE =
+  'OllaChat needs Screen Recording permission to share your screen. Turn on OllaChat in System Settings → Privacy & Security → Screen Recording, then quit and reopen OllaChat.';
+
 ipcMain.handle('desktop-capture:get-sources', async (_event, options = {}) => {
   try {
+    // macOS: without Screen Recording permission, getSources returns only blank thumbnails
+    // (or just the app's own windows), so guide the user to the right settings pane instead.
+    if (process.platform === 'darwin') {
+      let screenStatus = 'unknown';
+      try { screenStatus = systemPreferences.getMediaAccessStatus('screen'); } catch { }
+      if (screenStatus !== 'granted') {
+        // A first getSources call registers OllaChat in the Screen Recording list (and may show
+        // the system prompt), so the user can find it there.
+        try { await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }); } catch { }
+        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture').catch(() => { });
+        return { ok: false, error: MAC_SCREEN_PERMISSION_MESSAGE, code: 'screen_permission_required', sources: [] };
+      }
+    }
+
     const rawTypes = Array.isArray(options?.types) && options.types.length > 0
       ? options.types
       : ['screen', 'window'];
@@ -2948,6 +3066,38 @@ async function syncAndConnectUserRooms() {
 }
 
 app.whenReady().then(async () => {
+  if (process.platform === 'darwin') {
+    // Standard macOS menu bar: enables Cmd+C/V/X/A/Z, Cmd+H, Cmd+M, Cmd+W and Cmd+Q.
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' }
+        ]
+      },
+      { role: 'editMenu' },
+      {
+        label: 'View',
+        submenu: [
+          { role: 'resetZoom' },
+          { role: 'zoomIn' },
+          { role: 'zoomOut' },
+          { type: 'separator' },
+          { role: 'togglefullscreen' }
+        ]
+      },
+      { role: 'windowMenu' }
+    ]));
+  }
+
   const userDataPath = app.getPath('userData');
   getOrCreatePersistentDeviceId(userDataPath);
   sessionStore = new SessionStore(userDataPath);
