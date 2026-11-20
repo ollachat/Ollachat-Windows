@@ -118,6 +118,8 @@ if (process.platform === 'darwin') {
  */
 async function ensureMacMediaAccess(mediaTypes = []) {
   if (process.platform !== 'darwin') return true;
+  // Chromium fake capture devices (used by E2E tests) don't touch real hardware.
+  if (app.commandLine.hasSwitch('use-fake-device-for-media-stream')) return true;
   const wanted = new Set();
   for (const t of mediaTypes) {
     if (t === 'audio') wanted.add('microphone');
@@ -141,6 +143,16 @@ async function ensureMacMediaAccess(mediaTypes = []) {
 // package name ("ollachat-windows"). Must run before the single-instance lock and any
 // getPath('userData') use. Existing data from the old folder is moved over once.
 if (process.platform === 'darwin') {
+  // app.name otherwise comes from package.json "name" ("ollachat-windows"), which shows in the
+  // app menu and About panel.
+  app.setName('OllaChat');
+  try {
+    app.setAboutPanelOptions({
+      applicationName: 'OllaChat',
+      applicationVersion: app.getVersion(),
+      copyright: 'Copyright © 2026 Ollacore'
+    });
+  } catch { }
   try {
     const appSupport = app.getPath('appData');
     const macUserData = path.join(appSupport, 'OllaChat');
@@ -148,7 +160,8 @@ if (process.platform === 'darwin') {
     if (!fs.existsSync(macUserData) && fs.existsSync(legacyUserData)) {
       fs.renameSync(legacyUserData, macUserData);
     }
-    app.setPath('userData', macUserData);
+    // E2E tests run several isolated instances side by side, each with its own data folder.
+    app.setPath('userData', process.env.OLLACHAT_USER_DATA_DIR || macUserData);
   } catch (err) {
     console.warn('[main] Failed to set macOS userData path:', err?.message || err);
   }
@@ -1923,8 +1936,25 @@ ipcMain.handle('floating-call:bridge-signal', (_event, signal) => {
 });
 
 // Desktop / Screen Capture Sources Handler (Phase 1 Screen Sharing)
+const MAC_SCREEN_PERMISSION_MESSAGE =
+  'OllaChat needs Screen Recording permission to share your screen. Turn on OllaChat in System Settings → Privacy & Security → Screen Recording, then quit and reopen OllaChat.';
+
 ipcMain.handle('desktop-capture:get-sources', async (_event, options = {}) => {
   try {
+    // macOS: without Screen Recording permission, getSources returns only blank thumbnails
+    // (or just the app's own windows), so guide the user to the right settings pane instead.
+    if (process.platform === 'darwin') {
+      let screenStatus = 'unknown';
+      try { screenStatus = systemPreferences.getMediaAccessStatus('screen'); } catch { }
+      if (screenStatus !== 'granted') {
+        // A first getSources call registers OllaChat in the Screen Recording list (and may show
+        // the system prompt), so the user can find it there.
+        try { await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } }); } catch { }
+        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture').catch(() => { });
+        return { ok: false, error: MAC_SCREEN_PERMISSION_MESSAGE, code: 'screen_permission_required', sources: [] };
+      }
+    }
+
     const rawTypes = Array.isArray(options?.types) && options.types.length > 0
       ? options.types
       : ['screen', 'window'];

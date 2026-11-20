@@ -15675,6 +15675,10 @@ async function init() {
         const info = await window.ollacoreDesktop.getInfo();
         if (info) {
           const platformName = info.platform === 'win32' ? 'Windows' : info.platform === 'darwin' ? 'macOS' : (info.platform || 'Windows');
+          if (info.platform === 'darwin') {
+            const welcomeTitle = document.getElementById('chat-welcome-title');
+            if (welcomeTitle) welcomeTitle.textContent = 'OllaChat for Mac';
+          }
           const archName = info.arch || 'x64';
           const clientStr = `OllaChat Desktop (${platformName} ${archName})`;
           if (settingClient) settingClient.textContent = clientStr;

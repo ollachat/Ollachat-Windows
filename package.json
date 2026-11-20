@@ -19,7 +19,8 @@
     "dist": "npm run build && electron-builder --win --x64",
     "dist:win": "npm run build && electron-builder --win --x64",
     "dist:mac": "npm run build && electron-builder --mac",
-    "dist:mac:local": "npm run build && electron-builder --mac --dir"
+    "dist:mac:local": "npm run build && electron-builder --mac --dir",
+    "e2e:mac": "npm run build && node scripts/e2e-mac.mjs"
   },
   "dependencies": {
     "sqlite3": "^6.0.1",
@@ -28,7 +29,8 @@
   "devDependencies": {
     "electron": "33.4.11",
     "electron-builder": "^26.0.0",
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "playwright": "^1.49.1"
   },
   "allowScripts": {
     "electron@33.4.11": true,
