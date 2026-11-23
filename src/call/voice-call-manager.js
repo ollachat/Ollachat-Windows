@@ -1169,7 +1169,15 @@ export class VoiceCallManager extends CallEventEmitter {
   _playRemoteElement(element, kind, epoch = this.callEpoch, pc = this.peerConnection) {
     const isCurrentOwner = () => this._isCurrentEpoch(epoch) && (!pc || this.peerConnection === pc);
     if (!element || !this._remoteStream || !isCurrentOwner()) return;
+    // Re-assigning the same MediaStream object is a no-op, so a <video> element that was bound while the stream
+    // was audio-only (voice call: remote screen share is signalled by the SFU offer *before* its video track
+    // arrives) never shows the video track added later. Rebind whenever the stream's video tracks changed.
+    const videoKey = (this._remoteStream.getVideoTracks?.() || []).map((t) => t.id).join(',');
+    if (element.srcObject === this._remoteStream && kind === 'video' && element.__boundVideoTracks !== videoKey) {
+      element.srcObject = null;
+    }
     element.srcObject = this._remoteStream;
+    if (kind === 'video') element.__boundVideoTracks = videoKey;
     this._mediaLogOnce(`remote-${kind}-attached`, 'remote_stream_attached', { kind });
     const playback = element.play?.();
     if (!playback || typeof playback.then !== 'function') return;
