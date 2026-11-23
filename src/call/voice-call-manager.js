@@ -201,6 +201,46 @@ class FallbackIceCandidate {
  * - 30-second ringing timeout for both caller and callee (NO_ANSWER).
  * - Symmetrical call termination: Caller cancellation, Callee decline, and Remote hangup.
  */
+/**
+ * OllaCore's SFU sends no usable bandwidth feedback, so Chromium's send-side estimate stays at its built-in
+ * 300 kbps start value for the whole call (blurry, low-resolution video for the other side). Adding
+ * x-google-start/min/max-bitrate to the video codecs of the SFU's answer tells the encoder where to start and
+ * gives it a floor/ceiling. Measured on the native Mac client with the same SFU: 320–640 px at 30–290 kbps →
+ * 1280×720 @30 at ~1.4 Mbps.
+ * @param {string} sdp remote answer SDP
+ * @param {number} [startKbps=1500]
+ * @returns {string}
+ */
+export function addVideoBitrateHints(sdp, startKbps = 1500) {
+  if (typeof sdp !== 'string' || !sdp) return sdp;
+  const minKbps = Math.max(300, Math.round(startKbps * 2 / 5));
+  const maxKbps = Math.max(startKbps, Math.round(startKbps * 5 / 3));
+  const hint = `x-google-start-bitrate=${startKbps};x-google-min-bitrate=${minKbps};x-google-max-bitrate=${maxKbps}`;
+  const eol = sdp.includes('\r\n') ? '\r\n' : '\n';
+  const lines = sdp.split(/\r?\n/);
+  const videoPts = new Set();
+  let inVideo = false;
+  for (const line of lines) {
+    if (line.startsWith('m=')) inVideo = line.startsWith('m=video');
+    const m = inVideo && /^a=rtpmap:(\d+) (VP8|VP9|AV1|H264)\//i.exec(line);
+    if (m) videoPts.add(m[1]);
+  }
+  if (videoPts.size === 0) return sdp;
+  const out = [];
+  const hasFmtp = new Set(lines.map((l) => /^a=fmtp:(\d+) /.exec(l)?.[1]).filter(Boolean));
+  for (const line of lines) {
+    const f = /^a=fmtp:(\d+) /.exec(line);
+    if (f && videoPts.has(f[1]) && !line.includes('x-google-start-bitrate')) {
+      out.push(`${line};${hint}`);
+      continue;
+    }
+    out.push(line);
+    const r = /^a=rtpmap:(\d+) /.exec(line);
+    if (r && videoPts.has(r[1]) && !hasFmtp.has(r[1])) out.push(`a=fmtp:${r[1]} ${hint}`);
+  }
+  return out.join(eol);
+}
+
 export class VoiceCallManager extends CallEventEmitter {
   /**
    * @param {object} [options]
@@ -2365,7 +2405,7 @@ export class VoiceCallManager extends CallEventEmitter {
           await this._resumeDeferredNegotiationNow(epoch, pc);
           return;
         }
-        const desc = new this.SessionDescriptionClass({ type: 'answer', sdp });
+        const desc = new this.SessionDescriptionClass({ type: 'answer', sdp: addVideoBitrateHints(sdp) });
         await pc.setRemoteDescription(desc);
         if (!this._isCurrentPeer(epoch, pc)) return;
         this._outstandingLocalOffer = null;
